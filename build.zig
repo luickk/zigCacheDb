@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub fn build(b: *std.build.Builder) void {
-    const mode = b.standardReleaseOptions();
+    const mode = std.builtin.Mode.Debug;
 
     const lib = b.addStaticLibrary("server", "src/server.zig");
     lib.addObjectFile("src/local.zig");

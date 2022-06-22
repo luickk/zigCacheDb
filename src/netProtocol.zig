@@ -1,4 +1,6 @@
 const std = @import("std");
+const native_endian = @import("builtin").target.cpu.arch.endian();
+const utils = @import("utils.zig");
 const testing = std.testing;
 const print = std.debug.print;
 const ArrayList = std.ArrayList;
@@ -11,6 +13,7 @@ const Allocator = std.mem.Allocator;
 
 const local = @import("local.zig");
 
+// todo: make it extern or mem consistent of some kind
 const cacheOperation = enum(u8) {
     pullByKey,
     pushKeyVal,
@@ -18,7 +21,8 @@ const cacheOperation = enum(u8) {
 };
 
 // protocol: opCode: u8; keySize: u16; key: []u8; valSize: u16; val: []u8
-const protMsg = extern struct { op_code: u8, key_size: u16, key: []const u8, val_size: u16, val: []const u8 };
+// key/val len info contained in slice
+const protMsg = struct { op_code: u8, key: []u8, val: []u8 };
 
 // state conserving parser
 pub const ProtocolParser = struct {
@@ -30,14 +34,17 @@ pub const ProtocolParser = struct {
     step_size: u32,
 
     // returns 0 if there is nothing left to parse anymore and state information if there is
-    pub fn parse(self: *ProtocolParser, inp: *const []u8) ?struct { step: u8, step_size: u32 } {
+    pub fn parse(self: *ProtocolParser, inp: []u8) ?struct { step: u8, step_size: u32 } {
+        if (native_endian == .Little) {
+            mem.swap(u8, inp);
+        }
         self.step_size = 0;
         parsing: while (true) {
             switch (self.step) {
                 0 => {
                     self.step_size += 1;
                     if (inp.len >= self.step_size) {
-                        self.temp_parsing_prot_msg.op_code = mem.readInt(u8, inp[0], .bigEndian);
+                        self.temp_parsing_prot_msg.op_code = mem.readInt(u8, inp[0], .Little);
                         self.step += 1;
                     } else {
                         break :parsing;
@@ -46,17 +53,17 @@ pub const ProtocolParser = struct {
                 1 => {
                     self.step_size += 2;
                     if (inp.len >= self.step_size) {
-                        self.temp_parsing_prot_msg.key_size = mem.readInt(u16, inp[1..2], .bigEndian);
+                        self.temp_parsing_prot_msg.key.len = mem.readInt(u16, inp[1..2], .Little);
                         self.step += 1;
                     } else {
                         break :parsing;
                     }
                 },
                 3 => {
-                    self.step_size += self.temp_parsing_prot_msg.key_size;
+                    self.step_size += self.temp_parsing_prot_msg.key.len;
                     if (inp.len >= self.step_size) {
                         // todo => endianness!
-                        self.temp_parsing_prot_msg.key = inp[self.step_size - self.temp_parsing_prot_msg.key_size .. self.step_size];
+                        self.temp_parsing_prot_msg.key = inp[self.step_size - self.temp_parsing_prot_msg.key.len .. self.step_size];
                         self.step += 1;
                     } else {
                         break :parsing;
@@ -66,16 +73,16 @@ pub const ProtocolParser = struct {
                     self.step_size += 2;
                     if (inp.len >= self.step_size) {
                         // todo => endianness!
-                        self.temp_parsing_prot_msg.val_size = mem.readInt(u16, inp[self.step_size - 2 .. self.step_size], .bigEndian);
+                        self.temp_parsing_prot_msg.val.len = mem.readInt(u16, inp[self.step_size - 2 .. self.step_size], .Little);
                         self.step += 1;
                     } else {
                         break :parsing;
                     }
                 },
                 5 => {
-                    self.step_size += self.temp_parsing_prot_msg.val_size;
+                    self.step_size += self.temp_parsing_prot_msg.val.len;
                     if (inp.len >= self.step_size) {
-                        self.temp_parsing_prot_msg.val = inp[self.step_size - self.temp_parsing_prot_msg.val_size .. self.step_size];
+                        self.temp_parsing_prot_msg.val = inp[self.step_size - self.temp_parsing_prot_msg.val.len .. self.step_size];
                         self.step += 1;
                     } else {
                         break :parsing;
@@ -89,26 +96,36 @@ pub const ProtocolParser = struct {
         return .{ .step = self.step, .step_size = self.step_size };
     }
 
-    pub fn encode(a: Allocator, to_encode: protMsg) !struct { data: [*]u8, size: u32 } {
-        const mem_size = 1 + 2 + to_encode.key_size + 2 + to_encode.val_size;
+    // todo: encode in big endian!!
+    pub fn encode(a: Allocator, to_encode: protMsg) ![]u8 {
+        const mem_size = 1 + 2 + to_encode.key.len + 2 + to_encode.val.len;
         const encoded_msg = try a.alloc(u8, mem_size);
 
-        mem.writeInt(u8, &encoded_msg[0], to_encode.op_code, .bigEndian);
+        mem.writeIntSlice(u8, encoded_msg[0..1], to_encode.op_code, .Little);
 
-        mem.writeInt(u16, &encoded_msg[1], to_encode.key_size, .bigEndian);
-        mem.writeIntSliceBig(u8, &encoded_msg[3], to_encode.key, .bigEndian);
+        mem.writeIntSlice(u16, encoded_msg[1..3], @truncate(u16, to_encode.key.len), .Little);
+        mem.copy(u8, encoded_msg[3 .. to_encode.key.len + 3], to_encode.key);
 
-        mem.writeInt(u16, &encoded_msg[3 + to_encode.key_size + 1], to_encode.val_size, .bigEndian);
-        mem.writeIntSliceBig(u8, &encoded_msg[3 + to_encode.key_size + 2 + to_encode.val_size + 1], to_encode.val, .bigEndian);
+        mem.writeIntSlice(u16, encoded_msg[3 + to_encode.key.len .. 3 + to_encode.key.len + 2], @truncate(u16, to_encode.val.len), .Little);
+        mem.copy(u8, encoded_msg[3 + 2 + to_encode.key.len .. 3 + 2 + to_encode.key.len + to_encode.val.len], to_encode.val);
 
-        return .{ mem, mem_size };
+        if (native_endian == .Little) {
+            mem.swap(u8, encoded_msg);
+        }
+
+        return encoded_msg;
     }
 };
 
 test "test protocol encoding" {
-    const msg = protMsg {.op_code=1,.key_size=4,.key="test",.val_size=9,.val="123456789"}};
+    var key = "test".*;
+    var val = "123456789".*;
+
+    const msg = protMsg{ .op_code = 1, .key = &key, .val = &val };
+    var en_msg = try ProtocolParser.encode(test_allocator, msg);
+    defer test_allocator.free(en_msg);
+
+    print("encoded msg: {b} \n", .{en_msg});
 }
 
-test "test protocol parsing" {
-
-}
+test "test protocol parsing" {}
