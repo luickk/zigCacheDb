@@ -20,8 +20,7 @@ pub const cacheOperation = enum(u8) {
 
 // protocol: opCode: u8; keySize: u16; key: []u8; valSize: u16; val: []u8
 // key/val len info contained in slice
-// TODO: REMOVE SIZE INFO...
-pub const protMsg = struct { op_code: cacheOperation, key: []u8, key_size: usize, val: []u8, val_size: usize };
+pub const protMsg = struct { op_code: cacheOperation, key: []u8, val: []u8 };
 
 // state conserving parser
 pub const ProtocolParser = struct {
@@ -36,7 +35,7 @@ pub const ProtocolParser = struct {
     merge_point: usize,
 
     pub fn init(a: Allocator) ProtocolParser {
-        return ProtocolParser{ .a = a, .temp_parsing_prot_msg = .{ .op_code = undefined, .key = undefined, .key_size = 0, .val = undefined, .val_size = 0 }, .step_size = 0, .step = 0, .merge_point = 0 };
+        return ProtocolParser{ .a = a, .temp_parsing_prot_msg = .{ .op_code = undefined, .key = undefined, .val = undefined }, .step_size = 0, .step = 0, .merge_point = 0 };
     }
 
     // returns 0 if there is nothing left to parse anymore and state information if there is
@@ -65,7 +64,7 @@ pub const ProtocolParser = struct {
                     print("-------2 c/n", .{});
                     if (read_size >= self.step_size) {
                         print("-------2,2 c/n", .{});
-                        self.temp_parsing_prot_msg.key_size = mem.readInt(u16, inp[1..3], native_endian);
+                        self.temp_parsing_prot_msg.key.len = mem.readInt(u16, inp[1..3], native_endian);
                         self.step += 1;
                         print("-------2,4 c/n", .{});
                     } else {
@@ -77,7 +76,7 @@ pub const ProtocolParser = struct {
                     self.step_size += self.temp_parsing_prot_msg.key.len;
                     if (read_size >= self.step_size) {
                         print("-------3 /n", .{});
-                        self.temp_parsing_prot_msg.key = try self.a.alloc(u8, self.temp_parsing_prot_msg.key_size);
+                        self.temp_parsing_prot_msg.key = try self.a.alloc(u8, self.temp_parsing_prot_msg.key.len);
                         mem.copy(u8, self.temp_parsing_prot_msg.key, inp[self.step_size - self.temp_parsing_prot_msg.key.len .. self.step_size]);
                         self.step += 1;
                     } else {
@@ -89,7 +88,7 @@ pub const ProtocolParser = struct {
                     self.step_size += 2;
                     if (read_size >= self.step_size) {
                         print("-------4 c/n", .{});
-                        self.temp_parsing_prot_msg.val_size = mem.readIntSlice(u16, inp[self.step_size - 2 .. self.step_size], native_endian);
+                        self.temp_parsing_prot_msg.val.len = mem.readIntSlice(u16, inp[self.step_size - 2 .. self.step_size], native_endian);
                         self.step += 1;
                     } else {
                         self.merge_point = self.step_size - read_size;
@@ -99,7 +98,7 @@ pub const ProtocolParser = struct {
                 5 => {
                     self.step_size += self.temp_parsing_prot_msg.val.len;
                     if (read_size >= self.step_size) {
-                        self.temp_parsing_prot_msg.val = try self.a.alloc(u8, self.temp_parsing_prot_msg.val_size);
+                        self.temp_parsing_prot_msg.val = try self.a.alloc(u8, self.temp_parsing_prot_msg.val.len);
                         mem.copy(u8, self.temp_parsing_prot_msg.val, inp[self.step_size - self.temp_parsing_prot_msg.val.len .. self.step_size]);
                         self.step += 1;
                         print("-------6 /n", .{});
@@ -140,7 +139,7 @@ pub const ProtocolParser = struct {
 };
 
 test "test protocol parsing" {
-    const msg = protMsg{ .op_code = cacheOperation.pushKeyVal, .key = "test", .key_size = 4, .val = "123456789", .val_size = 9 };
+    const msg = protMsg{ .op_code = cacheOperation.pushKeyVal, .key = "test", .val = "123456789" };
 
     var en_msg = try ProtocolParser.encode(test_allocator, msg);
     defer test_allocator.free(en_msg);

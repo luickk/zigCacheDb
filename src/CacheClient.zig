@@ -35,7 +35,7 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
         pub fn pushKeyVal(self: *Self, key: KeyType, val: ValType) !void {
             var sK = KeyValGenericMixin.serializeKey(key);
             var sV = KeyValGenericMixin.serializeKey(val);
-            var msg = netProtocol.protMsg{ .op_code = netProtocol.cacheOperation.pushKeyVal, .key = sK, .key_size = sK.len, .val = sV, .val_size = sV.len };
+            var msg = netProtocol.protMsg{ .op_code = netProtocol.cacheOperation.pushKeyVal, .key = sK, .val = sV };
             var msg_encoded = try netProtocol.ProtocolParser.encode(self.a, &msg);
             _ = try self.conn.write(msg_encoded);
         }
