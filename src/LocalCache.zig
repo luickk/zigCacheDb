@@ -80,14 +80,15 @@ fn KeyValGenericOperations() type {
 }
 
 test "basic LocalCache test" {
-    var cache = LocalCache(KeyValGenericOperations(), []const u8, []const u8).init(test_allocator);
+    var cache = LocalCache(KeyValGenericOperations(), []u8, []u8).init(test_allocator);
     defer cache.deinit();
 
-    try expect(!try cache.exists("doesNotExist"));
+    var doesNotEx = "doesNotExist".*;
+    var t1 = "test1".*;
+    var testVal = "testVal".*;
 
-    try cache.addKeyVal("test1", "testVal");
-
-    try expect(try cache.removeByKey("test1"));
-
-    try expect(!try cache.exists("test1"));
+    try expect(!try cache.exists(&doesNotEx));
+    try cache.addKeyVal(&t1, &testVal);
+    try expect(try cache.removeByKey(&t1));
+    try expect(!try cache.exists(&t1));
 }
