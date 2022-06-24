@@ -45,6 +45,7 @@ pub fn main() !void {
     var key = "test".*;
     var val = "123456789".*;
     try client.pushKeyVal(&key, &val);
+    print("key pushed \n", .{});
 
     server_thread.join();
     print("server thread joined \n", .{});

@@ -10,24 +10,17 @@ const net = std.net;
 const test_allocator = std.testing.allocator;
 const Allocator = std.mem.Allocator;
 
-const localCacheErr = error{};
-
-pub fn KeyValPair(KeyType: anytype, ValType: anytype) type {
-    return struct {
-        key: KeyType,
-        val: ValType,
-    };
-}
+const LocalCacheErr = error{};
 
 pub fn LocalCache(comptime KeyValGenericMixin: type, comptime KeyType: type, comptime ValType: type) type {
     return struct {
         const Self = @This();
 
-        key_val_store: ArrayList(KeyValPair(KeyType, ValType)),
+        key_val_store: ArrayList(KeyValPair()),
         key_val_store_mutex: Mutex,
 
         pub fn init(a: Allocator) Self {
-            return Self{ .key_val_store = ArrayList(KeyValPair(KeyType, ValType)).init(a), .key_val_store_mutex = .{} };
+            return Self{ .key_val_store = ArrayList(KeyValPair()).init(a), .key_val_store_mutex = .{} };
         }
 
         pub fn deinit(self: *Self) void {
@@ -38,8 +31,20 @@ pub fn LocalCache(comptime KeyValGenericMixin: type, comptime KeyType: type, com
             self.key_val_store_mutex.lock();
             defer self.key_val_store_mutex.unlock();
 
-            try self.key_val_store.append(KeyValPair(KeyType, ValType){ .key = key, .val = val });
+            try self.key_val_store.append(KeyValPair(){ .key = key, .val = val });
             self.key_val_store_mutex.unlock();
+        }
+
+        pub fn getValByKey(self: *Self, key: KeyType) ?ValType {
+            self.key_val_store_mutex.lock();
+            defer self.key_val_store_mutex.unlock();
+
+            for (self.key_val_store.items) |key_val| {
+                if (KeyValGenericMixin.eql(key_val.key, key)) {
+                    return key_val.val;
+                }
+            }
+            return null;
         }
 
         pub fn exists(self: *Self, key: KeyType) !bool {
@@ -68,6 +73,13 @@ pub fn LocalCache(comptime KeyValGenericMixin: type, comptime KeyType: type, com
         }
 
         pub usingnamespace KeyValGenericMixin;
+
+        pub fn KeyValPair() type {
+            return struct {
+                key: KeyType,
+                val: ValType,
+            };
+        }
     };
 }
 

@@ -2,7 +2,8 @@ const std = @import("std");
 const netProtocol = @import("netProtocol.zig");
 // const is_test = @import("builtin").is_test;
 const ProtocolParser = netProtocol.ProtocolParser;
-const cacheOperation = netProtocol.cacheOperation;
+const ParserState = netProtocol.ProtocolParser.ParserState;
+const CacheOperation = netProtocol.ProtocolParser.CacheOperation;
 const testing = std.testing;
 const print = std.debug.print;
 const ArrayList = std.ArrayList;
@@ -28,24 +29,34 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
                 var parser = ProtocolParser.init(test_allocator);
                 var buff: [500]u8 = undefined;
                 var read_size: usize = undefined;
-                var fully_parsed = true;
+                var parser_state = ParserState.parsing;
                 while (true) {
-                    if (fully_parsed) {
-                        read_size = try self.conn.stream.read(&buff);
-                    } else {
+                    if (parser_state == ParserState.waiting) {
                         read_size = try self.conn.stream.read(buff[parser.step_size..]);
+                    } else {
+                        read_size = try self.conn.stream.read(&buff);
                     }
+
                     if (read_size == 0) {
                         break;
                     }
-                    fully_parsed = try parser.parse(&buff, read_size);
-                    if (fully_parsed) {
+
+                    while (parser_state == ParserState.parsing) {
+                        parser_state = try parser.parse(&buff, read_size);
+                    }
+
+                    if (parser_state == ParserState.done) {
                         switch (parser.temp_parsing_prot_msg.op_code) {
-                            cacheOperation.pullByKey => {},
-                            cacheOperation.pushKeyVal => {
+                            CacheOperation.pullByKey => {},
+                            CacheOperation.pushKeyVal => {
                                 try cache.addKeyVal(KeyValGenericMixin.deserializeKey(parser.temp_parsing_prot_msg.key), KeyValGenericMixin.deserializeVal(parser.temp_parsing_prot_msg.val));
+                                var s = "test".*;
+                                if (try cache.exists(&s)) {
+                                    print("added key.. \n", .{});
+                                }
+                                print("val: {s} \n", .{cache.getValByKey(&s) orelse unreachable});
                             },
-                            cacheOperation.pullByKeyReply => unreachable,
+                            CacheOperation.pullByKeyReply => unreachable,
                         }
                     }
                 }
