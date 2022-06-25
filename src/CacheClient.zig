@@ -37,6 +37,7 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
             var sV = KeyValGenericMixin.serializeKey(val);
             var msg = ProtocolParser.protMsg{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = sK, .val = sV };
             var msg_encoded = try ProtocolParser.encode(self.a, &msg);
+            // todo => check if write is completed...
             _ = try self.conn.write(msg_encoded);
         }
     };

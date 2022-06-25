@@ -1,7 +1,9 @@
 const std = @import("std");
+const utils = @import("utils.zig");
 const mem = std.mem;
 const print = std.debug.print;
 const test_allocator = std.testing.allocator;
+const native_endian = @import("builtin").target.cpu.arch.endian();
 
 const RemoteCacheInstance = @import("RemoteCacheInstance.zig").RemoteCacheInstance;
 const CacheClient = @import("CacheClient.zig").CacheClient;
@@ -42,10 +44,17 @@ pub fn main() !void {
     try client.connectToServer();
     print("client connected \n", .{});
 
-    var key = "test".*;
+    // pragmatic
+    var key = "test-00000000000000000000".*;
     var val = "123456789".*;
-    try client.pushKeyVal(&key, &val);
-    print("key pushed \n", .{});
+
+    var i: u16 = 0;
+    while (i < 500) : (i += 1) {
+        mem.copy(u8, key[5..], &utils.uitoa(i));
+        try client.pushKeyVal(&key, &val);
+        std.time.sleep(std.time.ns_per_s * 0.1);
+    }
+    print("keys pushed \n", .{});
 
     server_thread.join();
     print("server thread joined \n", .{});
@@ -55,6 +64,18 @@ fn serverTest() void {
     var server = RemoteCacheInstance(KeyValGenericOperations(), []u8, []u8).init(test_allocator, 8888);
     defer server.deinit();
 
+    _ = std.Thread.spawn(.{}, serverCacheMonitor, .{&server}) catch {
+        print("serverCacheMonitor error \n", .{});
+    };
+    print("cache monitor started \n", .{});
+
     print("cache instance started \n", .{});
     server.startInstance() catch unreachable;
+}
+
+fn serverCacheMonitor(server: *RemoteCacheInstance(KeyValGenericOperations(), []u8, []u8)) void {
+    while (true) {
+        std.time.sleep(std.time.ns_per_s * 5);
+        server.debugPrintLocalCache();
+    }
 }

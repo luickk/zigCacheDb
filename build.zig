@@ -3,10 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.build.Builder) void {
     const mode = std.builtin.Mode.Debug;
 
-    const lib = b.addStaticLibrary("server", "src/RemoteCacheInstance.zig");
-    lib.addObjectFile("src/LocalCache.zig");
-    lib.addObjectFile("src/CacheClient.zig");
-    lib.addObjectFile("src/netProtocol.zig");
+    const lib = b.addStaticLibrary("server", "src/main.zig");
     lib.setBuildMode(mode);
     lib.install();
 

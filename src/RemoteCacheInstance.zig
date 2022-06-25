@@ -1,6 +1,5 @@
 const std = @import("std");
 const netProtocol = @import("netProtocol.zig");
-// const is_test = @import("builtin").is_test;
 const ProtocolParser = netProtocol.ProtocolParser;
 const ParserState = netProtocol.ProtocolParser.ParserState;
 const CacheOperation = netProtocol.ProtocolParser.CacheOperation;
@@ -36,7 +35,6 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
                     } else {
                         read_size = try self.conn.stream.read(&buff);
                     }
-
                     if (read_size == 0) {
                         break;
                     }
@@ -44,20 +42,15 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
                     while (parser_state == ParserState.parsing) {
                         parser_state = try parser.parse(&buff, read_size);
                     }
-
                     if (parser_state == ParserState.done) {
                         switch (parser.temp_parsing_prot_msg.op_code) {
                             CacheOperation.pullByKey => {},
                             CacheOperation.pushKeyVal => {
                                 try cache.addKeyVal(KeyValGenericMixin.deserializeKey(parser.temp_parsing_prot_msg.key), KeyValGenericMixin.deserializeVal(parser.temp_parsing_prot_msg.val));
-                                var s = "test".*;
-                                if (try cache.exists(&s)) {
-                                    print("added key.. \n", .{});
-                                }
-                                print("val: {s} \n", .{cache.getValByKey(&s) orelse unreachable});
                             },
                             CacheOperation.pullByKeyReply => unreachable,
                         }
+                        parser_state = ParserState.parsing;
                     }
                 }
             }
@@ -73,6 +66,10 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
             return Self{ .port = port, .cache = LocalCache(KeyValGenericMixin, KeyType, ValType).init(a), .server = net.StreamServer.init(.{}), .a = a };
         }
 
+        pub fn debugPrintLocalCache(self: *Self) void {
+            self.cache.debugPrintCache();
+        }
+
         pub fn startInstance(self: *Self) !void {
             try self.server.listen(try net.Address.parseIp("127.0.0.1", self.port));
             while (true) {
@@ -80,7 +77,7 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
 
                 client.* = Client{
                     .conn = try self.server.accept(),
-                    // todo: determine wether async is really the right option for a streaming protocol
+                    // todo => determine wether async is really the right option for a streaming protocol
                     .handle_frame = async client.handle(&self.cache),
                 };
             }

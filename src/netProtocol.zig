@@ -50,9 +50,9 @@ pub const ProtocolParser = struct {
     }
 
     // returns true if there is nothing left to parse
-    // todo: proper error handling
-    // todo: endianness; network endi.
-    // todo: handle alloced memory
+    // todo => proper error handling
+    // todo => endianness; network endi.
+    // todo => handle alloced memory
     pub fn parse(self: *ProtocolParser, inp: []u8, read_size: usize) !ParserState {
         // if (native_endian == .Little) {
         //     utils.sliceSwap(u8, inp);
@@ -121,17 +121,29 @@ pub const ProtocolParser = struct {
 };
 
 test "test protocol parsing" {
-    const msg = ProtocolParser.protMsg{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = "test", .val = "123456789" };
+    var key = "test".*;
+    var val = "123456789".*;
+    var msg = ProtocolParser.protMsg{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = &key, .val = &val };
 
-    var en_msg = try ProtocolParser.encode(test_allocator, msg);
+    var en_msg = try ProtocolParser.encode(test_allocator, &msg);
     defer test_allocator.free(en_msg);
 
     var parser = ProtocolParser.init(test_allocator);
     _ = parser;
-    // todo: fix parser
-    // try expect(try parser.parse(en_msg, en_msg.len));
+    // todo => fix parser
 
-    // try expect(parser.temp_parsing_prot_msg.op_code == 1);
-    // try expect(mem.eql(u8, parser.temp_parsing_prot_msg.key, &key));
-    // try expect(mem.eql(u8, parser.temp_parsing_prot_msg.val, &val));
+    var i: usize = 0;
+    while ((try parser.parse(en_msg, en_msg.len)) == ProtocolParser.ParserState.parsing) {
+        i += 1;
+        if (i > 4) {
+            try expect(false);
+        }
+    }
+
+    try expect(parser.temp_parsing_prot_msg.op_code == ProtocolParser.CacheOperation.pushKeyVal);
+    try expect(mem.eql(u8, parser.temp_parsing_prot_msg.key, &key));
+    try expect(mem.eql(u8, parser.temp_parsing_prot_msg.val, &val));
+
+    test_allocator.free(parser.temp_parsing_prot_msg.key);
+    test_allocator.free(parser.temp_parsing_prot_msg.val);
 }

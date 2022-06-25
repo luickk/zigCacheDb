@@ -47,6 +47,19 @@ pub fn LocalCache(comptime KeyValGenericMixin: type, comptime KeyType: type, com
             return null;
         }
 
+        pub fn debugPrintCache(self: *Self) void {
+            self.key_val_store_mutex.lock();
+            defer self.key_val_store_mutex.unlock();
+
+            // todo => make print generic
+            print("--------------------------------------------\n", .{});
+            for (self.key_val_store.items) |key_val| {
+                print("key: {s}         val: {s} \n", .{ key_val.key, key_val.val });
+            }
+            print("n pairs: {d}", .{self.key_val_store.items.len});
+            print("--------------------------------------------\n", .{});
+        }
+
         pub fn exists(self: *Self, key: KeyType) !bool {
             self.key_val_store_mutex.lock();
             defer self.key_val_store_mutex.unlock();
@@ -103,4 +116,9 @@ test "basic LocalCache test" {
     try cache.addKeyVal(&t1, &testVal);
     try expect(try cache.removeByKey(&t1));
     try expect(!try cache.exists(&t1));
+
+    try cache.addKeyVal(&t1, &testVal);
+    var res = cache.getValByKey(&t1) orelse unreachable;
+
+    try expect(mem.eql(u8, res, "testVal"));
 }
