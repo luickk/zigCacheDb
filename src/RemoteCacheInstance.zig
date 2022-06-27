@@ -1,5 +1,6 @@
 const std = @import("std");
 const netProtocol = @import("netProtocol.zig");
+const native_endian = @import("builtin").target.cpu.arch.endian();
 const ProtocolParser = netProtocol.ProtocolParser;
 const ParserState = netProtocol.ProtocolParser.ParserState;
 const CacheOperation = netProtocol.ProtocolParser.CacheOperation;
@@ -16,6 +17,8 @@ const Allocator = std.mem.Allocator;
 const LocalCache = @import("LocalCache.zig").LocalCache;
 
 pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: type, comptime ValType: type) type {
+    const RemoteCacheInstanceErr = error{OperationNotSupported};
+
     return struct {
         const Self = @This();
 
@@ -23,34 +26,29 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
             conn: net.StreamServer.Connection,
             handle_frame: @Frame(handle),
 
-            fn handle(self: *Client, cache: *LocalCache(KeyValGenericMixin, KeyType, ValType)) !void {
-                _ = cache;
-                var parser = ProtocolParser.init(test_allocator);
-                var buff: [500]u8 = undefined;
-                var read_size: usize = undefined;
-                var parser_state = ParserState.parsing;
-                while (true) {
-                    if (parser_state == ParserState.waiting) {
-                        read_size = try self.conn.stream.read(buff[parser.step_size..]);
-                    } else {
-                        read_size = try self.conn.stream.read(&buff);
-                    }
-                    if (read_size == 0) {
-                        break;
-                    }
-
-                    while (parser_state == ParserState.parsing) {
-                        parser_state = try parser.parse(&buff, read_size);
-                    }
-                    if (parser_state == ParserState.done) {
-                        switch (parser.temp_parsing_prot_msg.op_code) {
-                            CacheOperation.pullByKey => {},
-                            CacheOperation.pushKeyVal => {
-                                try cache.addKeyVal(KeyValGenericMixin.deserializeKey(parser.temp_parsing_prot_msg.key), KeyValGenericMixin.deserializeVal(parser.temp_parsing_prot_msg.val));
-                            },
-                            CacheOperation.pullByKeyReply => unreachable,
+            fn handle(self: *Client, a: Allocator, cache: *LocalCache(KeyValGenericMixin, KeyType, ValType)) !void {
+                var parser = try ProtocolParser.init(test_allocator, self.conn, 500);
+                var parser_state = ProtocolParser.ParserState.parsing;
+                while (try parser.buffTcpParse()) {
+                    while (try parser.parse(&parser_state)) {
+                        if (parser_state == ParserState.done) {
+                            switch (parser.temp_parsing_prot_msg.op_code) {
+                                CacheOperation.pullByKey => {
+                                    if (cache.getValByKey(parser.temp_parsing_prot_msg.key) != null) {
+                                        // todo => ensure complete write
+                                        _ = try parser.conn.stream.write(try ProtocolParser.encode(a, &.{ .op_code = CacheOperation.pullByKeyReply, .key = parser.temp_parsing_prot_msg.key, .val = parser.temp_parsing_prot_msg.val }));
+                                    } else {
+                                        // todo => return key not foudn msg
+                                    }
+                                },
+                                CacheOperation.pushKeyVal => {
+                                    try cache.addKeyVal(KeyValGenericMixin.deserializeKey(parser.temp_parsing_prot_msg.key), KeyValGenericMixin.deserializeVal(parser.temp_parsing_prot_msg.val));
+                                },
+                                CacheOperation.pullByKeyReply => {
+                                    return RemoteCacheInstanceErr.OperationNotSupported;
+                                },
+                            }
                         }
-                        parser_state = ParserState.parsing;
                     }
                 }
             }
@@ -62,8 +60,7 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
         a: Allocator,
 
         pub fn init(a: Allocator, port: u16) Self {
-            // _ = KeyValGenericMixin.serializeKey("dsda");
-            return Self{ .port = port, .cache = LocalCache(KeyValGenericMixin, KeyType, ValType).init(a), .server = net.StreamServer.init(.{}), .a = a };
+            return Self{ .port = port, .cache = LocalCache(KeyValGenericMixin, KeyType, ValType).init(a), .server = net.StreamServer.init(.{ .reuse_address = true }), .a = a };
         }
 
         pub fn debugPrintLocalCache(self: *Self) void {
@@ -78,41 +75,22 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
                 client.* = Client{
                     .conn = try self.server.accept(),
                     // todo => determine wether async is really the right option for a streaming protocol
-                    .handle_frame = async client.handle(&self.cache),
+                    .handle_frame = async client.handle(self.a, &self.cache),
                 };
             }
         }
 
         pub fn deinit(self: *Self) void {
+            for (self.cache.key_val_store.items) |key_val| {
+                KeyValGenericMixin.freeKey(self.a, key_val.key);
+                KeyValGenericMixin.freeKey(self.a, key_val.val);
+            }
+            // does not deinit KeyVal pairs!
             self.cache.deinit();
             self.server.deinit();
         }
 
         pub usingnamespace KeyValGenericMixin;
-    };
-}
-
-fn KeyValGenericOperations() type {
-    return struct {
-        pub fn eql(k1: anytype, k2: anytype) bool {
-            return mem.eql(u8, k1, k2);
-        }
-
-        pub fn serializeKey(key: anytype) []u8 {
-            return key;
-        }
-
-        pub fn deserializeKey(key: anytype) []u8 {
-            return key;
-        }
-
-        pub fn serializeVal(val: anytype) []u8 {
-            return val;
-        }
-
-        pub fn deserializeVal(val: anytype) []u8 {
-            return val;
-        }
     };
 }
 

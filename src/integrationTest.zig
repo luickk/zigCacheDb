@@ -1,8 +1,10 @@
 const std = @import("std");
 const utils = @import("utils.zig");
+const time = std.time;
 const mem = std.mem;
 const print = std.debug.print;
 const test_allocator = std.testing.allocator;
+const Allocator = std.mem.Allocator;
 const native_endian = @import("builtin").target.cpu.arch.endian();
 
 const RemoteCacheInstance = @import("RemoteCacheInstance.zig").RemoteCacheInstance;
@@ -12,6 +14,14 @@ fn KeyValGenericOperations() type {
     return struct {
         pub fn eql(k1: anytype, k2: anytype) bool {
             return mem.eql(u8, k1, k2);
+        }
+
+        pub fn freeKey(a: Allocator, key: anytype) void {
+            a.free(key);
+        }
+
+        pub fn freeVal(a: Allocator, val: anytype) void {
+            a.free(val);
         }
 
         pub fn serializeKey(key: anytype) []u8 {
@@ -35,7 +45,7 @@ fn KeyValGenericOperations() type {
 pub fn main() !void {
     var server_thread = try std.Thread.spawn(.{}, serverTest, .{});
 
-    std.time.sleep(50000);
+    time.sleep(time.ns_per_s * 0.1);
 
     var addr = try std.net.Address.parseIp("127.0.0.1", 8888);
     var client = CacheClient(KeyValGenericOperations(), []u8, []u8).init(test_allocator, addr);
@@ -51,8 +61,9 @@ pub fn main() !void {
     var i: u16 = 0;
     while (i < 500) : (i += 1) {
         mem.copy(u8, key[5..], &utils.uitoa(i));
+        _ = i;
         try client.pushKeyVal(&key, &val);
-        std.time.sleep(std.time.ns_per_s * 0.1);
+        // time.sleep(time.ns_per_s * 0.1);
     }
     print("keys pushed \n", .{});
 
@@ -75,7 +86,8 @@ fn serverTest() void {
 
 fn serverCacheMonitor(server: *RemoteCacheInstance(KeyValGenericOperations(), []u8, []u8)) void {
     while (true) {
-        std.time.sleep(std.time.ns_per_s * 5);
+        time.sleep(time.ns_per_s * 5);
         server.debugPrintLocalCache();
+        break;
     }
 }
