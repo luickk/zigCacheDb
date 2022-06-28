@@ -64,7 +64,8 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
                     if (parser_state == ParserState.done) {
                         switch (parser.temp_parsing_prot_msg.op_code) {
                             CacheOperation.pullByKey => {
-                                if (cache.getValByKey(parser.temp_parsing_prot_msg.key) != null) {
+                                if (cache.getValByKey(parser.temp_parsing_prot_msg.key)) |val| {
+                                    _ = val;
                                     // todo => ensure complete write
                                     _ = try parser.conn.write(try ProtocolParser.encode(a, &.{ .op_code = CacheOperation.pullByKeyReply, .key = parser.temp_parsing_prot_msg.key, .val = parser.temp_parsing_prot_msg.val }));
                                 } else {

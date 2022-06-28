@@ -13,9 +13,10 @@ const test_allocator = std.testing.allocator;
 const Allocator = std.mem.Allocator;
 
 pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, comptime ValType: type) type {
-    const SyncCacheKey = struct {
-        key: KeyType,
+    const SyncCacheVal = struct {
+        val: ?ValType,
         broadcast: std.Thread.Condition,
+        bc_mutex: std.Thread.Mutex,
     };
     return struct {
         const Self = @This();
@@ -25,10 +26,10 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
         addr: net.Address,
         conn: net.Stream,
         a: Allocator,
-        sync_cache: LocalCache(SyncCacheGenericOperations(), SyncCacheKey, ValType),
+        sync_cache: LocalCache(SyncCacheGenericOperations(), KeyType, SyncCacheVal),
 
         pub fn init(a: Allocator, addr: net.Address) Self {
-            return Self{ .a = a, .addr = addr, .conn = undefined, .sync_cache = LocalCache(SyncCacheGenericOperations(), SyncCacheKey, ValType).init(a) };
+            return Self{ .a = a, .addr = addr, .conn = undefined, .sync_cache = LocalCache(SyncCacheGenericOperations(), KeyType, SyncCacheVal).init(a) };
         }
 
         pub fn deinit(self: Self) void {
@@ -37,30 +38,33 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
 
         pub fn connectToServer(self: *Self) !void {
             self.conn = try net.tcpConnectToAddress(self.addr);
-            _ = SyncCacheKey;
+            _ = SyncCacheVal;
             _ = try std.Thread.spawn(.{}, serverHandle, .{ self.conn, self.a, &self.sync_cache });
         }
 
         pub fn pushKeyVal(self: *Self, key: KeyType, val: ValType) !void {
             var sK = KeyValGenericMixin.serializeKey(key);
             var sV = KeyValGenericMixin.serializeKey(val);
-            var msg = ProtocolParser.protMsg{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = sK, .val = sV };
+            var msg = ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = sK, .val = sV };
             var msg_encoded = try ProtocolParser.encode(self.a, &msg);
             // todo => check if write is completed...
             _ = try self.conn.write(msg_encoded);
         }
 
-        pub fn pullValByKey(self: *Self, key: KeyType) !ValType {
+        pub fn pullValByKey(self: *Self, key: KeyType) !?ValType {
             // todo => ensure complete write
-            _ = try self.conn.write(try ProtocolParser.encode(self.a, &ProtocolParser.protMsg{ .op_code = ProtocolParser.CacheOperation.pullByKey, .key = key, .val = undefined }));
-            if (!try self.sync_cache.exists(.{ .key = key, .broadcast = .{} })) {
-                try self.sync_cache.addKeyVal(SyncCacheKey{ .key = key, .broadcast = .{} }, undefined);
+            _ = try self.conn.write(try ProtocolParser.encode(self.a, &ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pullByKey, .key = key, .val = undefined }));
+
+            if (self.sync_cache.getValByKey(key)) |*val| {
+                val.broadcast.wait(&val.bc_mutex);
+                return val.val;
+            } else {
+                try self.sync_cache.addKeyVal(key, SyncCacheVal{ .val = null, .broadcast = .{}, .bc_mutex = .{} });
             }
-            var s = "test".*;
-            return &s;
+            return null;
         }
 
-        fn serverHandle(conn: net.Stream, a: Allocator, sync_cache: *LocalCache(SyncCacheGenericOperations(), SyncCacheKey, ValType)) !void {
+        fn serverHandle(conn: net.Stream, a: Allocator, sync_cache: *LocalCache(SyncCacheGenericOperations(), KeyType, SyncCacheVal)) !void {
             _ = a;
             var parser = try ProtocolParser.init(test_allocator, conn, 500);
             var parser_state = ProtocolParser.ParserState.parsing;
@@ -75,8 +79,7 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
                                 return CacheClientErr.OperationNotSupported;
                             },
                             CacheOperation.pullByKeyReply => {
-                                // try sync_cache.addKeyVal(parser.temp_parsing_prot_msg.key, parser.temp_parsing_prot_msg.val);
-                                _ = sync_cache;
+                                if (try sync_cache.exists(parser.temp_parsing_prot_msg.key)) {}
                             },
                         }
                     }
@@ -86,8 +89,8 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
 
         fn SyncCacheGenericOperations() type {
             return struct {
-                pub fn eql(k1: SyncCacheKey, k2: SyncCacheKey) bool {
-                    return mem.eql(u8, k1.key, k2.key);
+                pub fn eql(k1: anytype, k2: anytype) bool {
+                    return mem.eql(u8, k1, k2);
                 }
 
                 pub fn freeKey(a: Allocator, key: anytype) void {
@@ -98,20 +101,20 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
                     a.free(val);
                 }
 
-                pub fn serializeKey(key: SyncCacheKey) []u8 {
+                pub fn serializeKey(key: anytype) []u8 {
                     return key.key;
                 }
 
-                pub fn deserializeKey(key: SyncCacheKey) []u8 {
+                pub fn deserializeKey(key: anytype) []u8 {
                     return key.key;
                 }
 
                 pub fn serializeVal(val: anytype) []u8 {
-                    return val;
+                    return val.val;
                 }
 
                 pub fn deserializeVal(val: anytype) []u8 {
-                    return val;
+                    return val.val;
                 }
             };
         }

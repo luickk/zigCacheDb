@@ -42,7 +42,10 @@ pub fn main() !void {
     for ((try test_utils.createTestSet(test_allocator, 50)).items) |item| {
         var tset_key = item[0][0..].*;
         var tset_val = item[1][0..].*;
-        var pull_val = try client.pullValByKey(&tset_key);
+        var pull_val = (try client.pullValByKey(&tset_key)) orelse {
+            print("pull test failed(val not correct) \n", .{});
+            return;
+        };
         if (!mem.eql(u8, pull_val, &tset_val)) {
             print("pull test failed \n", .{});
             break;
@@ -66,19 +69,19 @@ fn KeyValGenericOperations() type {
         }
 
         pub fn serializeKey(key: anytype) []u8 {
-            return key;
+            return key.?;
         }
 
         pub fn deserializeKey(key: anytype) []u8 {
-            return key;
+            return key.?;
         }
 
         pub fn serializeVal(val: anytype) []u8 {
-            return val;
+            return val.?;
         }
 
         pub fn deserializeVal(val: anytype) []u8 {
-            return val;
+            return val.?;
         }
     };
 }

@@ -30,17 +30,20 @@ pub const ProtocolParser = struct {
         done,
     };
 
+    pub const ParserErr = error{ParserMissingVal};
+
     pub const ParserState = enum(u8) { mergeNew, parsing, done, waiting };
 
     // protocol: opCode: u8; keySize: u16; key: []u8; valSize: u16; val: []u8
     // key/val len info contained in slice
-    pub const protMsg = struct { op_code: CacheOperation, key: []u8, val: []u8 };
+    pub const protMsgEnc = struct { op_code: CacheOperation, key: ?[]u8, val: ?[]u8 };
+    const protMsgDec = struct { op_code: CacheOperation, key: []u8, val: []u8 };
 
     const buff_size = 500;
 
     a: Allocator,
     // struct to which newly parsed data is written for temp reuse
-    temp_parsing_prot_msg: protMsg,
+    temp_parsing_prot_msg: protMsgDec,
 
     // relevant for parse fn
     // contains enum at which element the parser currently is
@@ -103,6 +106,7 @@ pub const ProtocolParser = struct {
         self.msgs_parsed_index = 0;
         self.last_msg_index = 0;
         self.step = ProtocolParser.ParserStep.parsingOpCode;
+
         return true;
     }
 
@@ -168,17 +172,32 @@ pub const ProtocolParser = struct {
         return true;
     }
 
-    pub fn encode(a: Allocator, to_encode: *protMsg) ![]u8 {
-        var mem_size = 1 + 2 + to_encode.key.len + 2 + to_encode.val.len;
-        var encoded_msg = try a.alloc(u8, mem_size);
+    pub fn encode(a: Allocator, to_encode: *protMsgEnc) ![]u8 {
+        var key_size: usize = 0;
+        var val_size: usize = 0;
+        if (to_encode.key) |key| {
+            key_size = key.len;
+        }
+        if (to_encode.val) |val| {
+            val_size = val.len;
+        }
+        var encoded_msg = try a.alloc(u8, 1 + 2 + key_size + 2 + val_size);
 
         mem.writeIntSliceNative(u8, encoded_msg[0..1], @enumToInt(to_encode.op_code));
 
-        mem.writeIntSliceNative(u16, encoded_msg[1..3], @truncate(u16, to_encode.key.len));
-        mem.copy(u8, encoded_msg[3 .. to_encode.key.len + 3], to_encode.key);
+        if (to_encode.key) |key| {
+            mem.writeIntSliceNative(u16, encoded_msg[1..3], @truncate(u16, key.len));
+            mem.copy(u8, encoded_msg[3 .. key.len + 3], key);
+        } else {
+            mem.writeIntSliceNative(u16, encoded_msg[1..3], 0);
+        }
 
-        mem.writeIntSliceNative(u16, encoded_msg[3 + to_encode.key.len .. 3 + to_encode.key.len + 2], @truncate(u16, to_encode.val.len));
-        mem.copy(u8, encoded_msg[3 + 2 + to_encode.key.len .. 3 + 2 + to_encode.key.len + to_encode.val.len], to_encode.val);
+        if (to_encode.val) |val| {
+            mem.writeIntSliceNative(u16, encoded_msg[3 + key_size .. 3 + key_size + 2], @truncate(u16, val.len));
+            mem.copy(u8, encoded_msg[3 + 2 + key_size .. 3 + 2 + key_size + val.len], val);
+        } else {
+            mem.writeIntSliceNative(u16, encoded_msg[3 + key_size .. 3 + key_size + 2], 0);
+        }
 
         // if (native_endian == .Little) {
         //     mem.reverse(u8, encoded_msg);
