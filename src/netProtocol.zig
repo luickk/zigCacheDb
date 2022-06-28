@@ -37,7 +37,7 @@ pub const ProtocolParser = struct {
     // protocol: opCode: u8; keySize: u16; key: []u8; valSize: u16; val: []u8
     // key/val len info contained in slice
     pub const protMsgEnc = struct { op_code: CacheOperation, key: ?[]u8, val: ?[]u8 };
-    const protMsgDec = struct { op_code: CacheOperation, key: []u8, val: []u8 };
+    const protMsgDec = struct { op_code: CacheOperation, key_size: u16, key: ?[]u8, val_size: u16, val: ?[]u8 };
 
     const buff_size = 500;
 
@@ -68,7 +68,7 @@ pub const ProtocolParser = struct {
     pub fn init(a: Allocator, conn: net.Stream, merge_buff_size: usize) !ProtocolParser {
         return ProtocolParser{
             .a = a,
-            .temp_parsing_prot_msg = .{ .op_code = undefined, .key = undefined, .val = undefined },
+            .temp_parsing_prot_msg = .{ .op_code = undefined, .key_size = 0, .key = null, .val_size = 0, .val = null },
             .next_step_index = 1,
             .last_msg_index = 0,
             .msgs_parsed_index = 0,
@@ -107,6 +107,9 @@ pub const ProtocolParser = struct {
         self.last_msg_index = 0;
         self.step = ProtocolParser.ParserStep.parsingOpCode;
 
+        // self.temp_parsing_prot_msg.key = null;
+        // self.temp_parsing_prot_msg.val = null;
+
         return true;
     }
 
@@ -137,26 +140,30 @@ pub const ProtocolParser = struct {
                 self.next_step_index += 2;
             },
             ParserStep.parsingKeySize => {
-                self.temp_parsing_prot_msg.key.len = mem.readIntSliceNative(u16, self.buff[self.next_step_index - 2 .. self.next_step_index]);
+                self.temp_parsing_prot_msg.key_size = mem.readIntSliceNative(u16, self.buff[self.next_step_index - 2 .. self.next_step_index]);
                 self.step = ParserStep.parsingKey;
-                self.next_step_index += self.temp_parsing_prot_msg.key.len;
+                self.next_step_index += self.temp_parsing_prot_msg.key_size;
             },
             ParserStep.parsingKey => {
-                self.temp_parsing_prot_msg.key = try self.a.alloc(u8, self.temp_parsing_prot_msg.key.len);
-                mem.copy(u8, self.temp_parsing_prot_msg.key, self.buff[self.next_step_index - self.temp_parsing_prot_msg.key.len .. self.next_step_index]);
-                self.step = ParserStep.parsingValSize;
-                self.next_step_index += 2;
+                if (self.temp_parsing_prot_msg.key_size != 0) {
+                    self.temp_parsing_prot_msg.key = try self.a.alloc(u8, self.temp_parsing_prot_msg.key_size);
+                    mem.copy(u8, self.temp_parsing_prot_msg.key.?, self.buff[self.next_step_index - self.temp_parsing_prot_msg.key_size .. self.next_step_index]);
+                    self.step = ParserStep.parsingValSize;
+                    self.next_step_index += 2;
+                }
             },
             ParserStep.parsingValSize => {
-                self.temp_parsing_prot_msg.val.len = mem.readIntSliceNative(u16, self.buff[self.next_step_index - 2 .. self.next_step_index]);
+                self.temp_parsing_prot_msg.val_size = mem.readIntSliceNative(u16, self.buff[self.next_step_index - 2 .. self.next_step_index]);
                 self.step = ParserStep.parsingVal;
-                self.next_step_index += self.temp_parsing_prot_msg.val.len;
+                self.next_step_index += self.temp_parsing_prot_msg.val_size;
             },
             ParserStep.parsingVal => {
-                self.temp_parsing_prot_msg.val = try self.a.alloc(u8, self.temp_parsing_prot_msg.val.len);
-                mem.copy(u8, self.temp_parsing_prot_msg.val, self.buff[self.next_step_index - self.temp_parsing_prot_msg.val.len .. self.next_step_index]);
-                self.step = ParserStep.done;
-                self.next_step_index += 1;
+                if (self.temp_parsing_prot_msg.val_size != 0) {
+                    self.temp_parsing_prot_msg.val = try self.a.alloc(u8, self.temp_parsing_prot_msg.val_size);
+                    mem.copy(u8, self.temp_parsing_prot_msg.val.?, self.buff[self.next_step_index - self.temp_parsing_prot_msg.val_size .. self.next_step_index]);
+                    self.step = ParserStep.done;
+                    self.next_step_index += 1;
+                }
             },
             ParserStep.done => {},
         }

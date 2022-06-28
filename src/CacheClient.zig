@@ -79,7 +79,7 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
                                 return CacheClientErr.OperationNotSupported;
                             },
                             CacheOperation.pullByKeyReply => {
-                                if (try sync_cache.exists(parser.temp_parsing_prot_msg.key)) {}
+                                if (try sync_cache.exists(parser.temp_parsing_prot_msg.key.?)) {}
                             },
                         }
                     }
