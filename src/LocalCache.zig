@@ -47,6 +47,12 @@ pub fn LocalCache(comptime KeyValGenericMixin: type, comptime KeyType: type, com
             return null;
         }
 
+        pub fn getNKeyVal(self: *Self) usize {
+            self.key_val_store_mutex.lock();
+            defer self.key_val_store_mutex.unlock();
+            return self.key_val_store.items.len;
+        }
+
         pub fn debugPrintCache(self: *Self) void {
             self.key_val_store_mutex.lock();
             defer self.key_val_store_mutex.unlock();

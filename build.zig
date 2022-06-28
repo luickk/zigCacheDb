@@ -25,11 +25,16 @@ pub fn build(b: *std.build.Builder) void {
     test_step.dependOn(&client_tests.step);
     test_step.dependOn(&net_proto_tests.step);
 
-    const integration_test = b.addExecutable("itest", "src/integrationTest.zig");
-    integration_test.setBuildMode(mode);
-    integration_test.install();
-    const run_integration_test = integration_test.run();
+    const integration_push_test = b.addExecutable("pushTest", "integration-tests/pushTest.zig");
+    integration_push_test.addPackagePath("src", "src/main.zig");
+    integration_push_test.setBuildMode(mode);
+    integration_push_test.install();
+    const integration_pull_test = b.addExecutable("pullTest", "integration-tests/pullTest.zig");
+    integration_pull_test.addPackagePath("src", "src/main.zig");
+    integration_pull_test.setBuildMode(mode);
+    integration_pull_test.install();
 
     const itest_step = b.step("itest", "Run library integration tests");
-    itest_step.dependOn(&run_integration_test.step);
+    itest_step.dependOn(&integration_pull_test.run().step);
+    itest_step.dependOn(&integration_push_test.run().step);
 }

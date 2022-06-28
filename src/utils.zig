@@ -1,4 +1,6 @@
-const print = @import("std").debug.print;
+const std = @import("std");
+const print = std.debug.print;
+const Allocator = std.mem.Allocator;
 
 pub fn memToSlice(comptime T: type, ptr: [*]T, len: usize) []T {
     return @ptrCast(*[]T, &.{ .ptr = ptr, .len = len }).*;

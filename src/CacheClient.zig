@@ -1,5 +1,7 @@
 const std = @import("std");
 const ProtocolParser = @import("netProtocol.zig").ProtocolParser;
+const CacheOperation = @import("netProtocol.zig").ProtocolParser.CacheOperation;
+const LocalCache = @import("LocalCache.zig").LocalCache;
 const testing = std.testing;
 const print = std.debug.print;
 const ArrayList = std.ArrayList;
@@ -11,76 +13,22 @@ const test_allocator = std.testing.allocator;
 const Allocator = std.mem.Allocator;
 
 pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, comptime ValType: type) type {
+    const SyncCacheKey = struct {
+        key: KeyType,
+        broadcast: std.Thread.Condition,
+    };
     return struct {
         const Self = @This();
         const buff_size = 500;
         const CacheClientErr = error{OperationNotSupported};
 
-        // const Server = struct {
-        //     conn: net.Stream,
-        //     handle_frame: @Frame(handle),
-
-        //     fn handle(self: *Server, a: Allocator, sync_cache: *LocalCache(KeyValGenericMixin, KeyType, ValType)) !void {
-        //         _ = sync_cache;
-        //         _ = a;
-        //         var parser = try ProtocolParser.init(test_allocator, buff_size);
-        //         var buff: [buff_size]u8 = undefined;
-        //         var read_size: usize = undefined;
-        //         var append_tcp_buff = false;
-        //         var merge_size: usize = 0;
-        //         while (true) {
-        //             if (append_tcp_buff) {
-        //                 merge_size = read_size - parser.msgs_parsed_index;
-        //                 read_size = try self.conn.stream.read(buff[merge_size..]);
-        //                 mem.copy(u8, &buff, parser.merge_buff[0..merge_size]);
-        //                 read_size += merge_size;
-        //                 append_tcp_buff = false;
-        //             } else {
-        //                 read_size = try self.conn.stream.read(&buff);
-        //             }
-        //             if (read_size == 0) {
-        //                 break;
-        //             }
-
-        //             // has to be reset on every new buffer read
-        //             // in order to preserve step in a buffer transition, don't reset those vars (potential speed optimisation)
-        //             parser.next_step_index = 1;
-        //             parser.msgs_parsed_index = 0;
-        //             parser.last_msg_index = 0;
-        //             parser.step = ProtocolParser.ParserStep.parsingOpCode;
-        //             parsing: while (true) {
-        //                 switch (try parser.parse(&buff, read_size)) {
-        //                     ParserState.done => {
-        //                         switch (parser.temp_parsing_prot_msg.op_code) {
-        //                             CacheOperation.pullByKey => {
-        //                                 return CacheClientErr.OperationNotSupported;
-        //                             },
-        //                             CacheOperation.pushKeyVal => {
-        //                                 return CacheClientErr.OperationNotSupported;
-        //                             },
-        //                             CacheOperation.pullByKeyReply => {},
-        //                         }
-        //                     },
-        //                     ParserState.mergeNew => {
-        //                         append_tcp_buff = true;
-        //                         break :parsing;
-        //                     },
-        //                     ParserState.waiting => break :parsing,
-        //                     ParserState.parsing => continue,
-        //                 }
-        //             }
-        //         }
-        //     }
-        // };
         addr: net.Address,
         conn: net.Stream,
         a: Allocator,
+        sync_cache: LocalCache(SyncCacheGenericOperations(), SyncCacheKey, ValType),
 
         pub fn init(a: Allocator, addr: net.Address) Self {
-            _ = KeyValGenericMixin;
-            _ = KeyType;
-            _ = ValType;
-            return Self{ .a = a, .addr = addr, .conn = undefined };
+            return Self{ .a = a, .addr = addr, .conn = undefined, .sync_cache = LocalCache(SyncCacheGenericOperations(), SyncCacheKey, ValType).init(a) };
         }
 
         pub fn deinit(self: Self) void {
@@ -89,6 +37,8 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
 
         pub fn connectToServer(self: *Self) !void {
             self.conn = try net.tcpConnectToAddress(self.addr);
+            _ = SyncCacheKey;
+            _ = try std.Thread.spawn(.{}, serverHandle, .{ self.conn, self.a, &self.sync_cache });
         }
 
         pub fn pushKeyVal(self: *Self, key: KeyType, val: ValType) !void {
@@ -97,8 +47,73 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
             var msg = ProtocolParser.protMsg{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = sK, .val = sV };
             var msg_encoded = try ProtocolParser.encode(self.a, &msg);
             // todo => check if write is completed...
-            // print("{b} \n", .{msg_encoded});
             _ = try self.conn.write(msg_encoded);
+        }
+
+        pub fn pullValByKey(self: *Self, key: KeyType) !ValType {
+            // todo => ensure complete write
+            _ = try self.conn.write(try ProtocolParser.encode(self.a, &ProtocolParser.protMsg{ .op_code = ProtocolParser.CacheOperation.pullByKey, .key = key, .val = undefined }));
+            if (!try self.sync_cache.exists(.{ .key = key, .broadcast = .{} })) {
+                try self.sync_cache.addKeyVal(SyncCacheKey{ .key = key, .broadcast = .{} }, undefined);
+            }
+            var s = "test".*;
+            return &s;
+        }
+
+        fn serverHandle(conn: net.Stream, a: Allocator, sync_cache: *LocalCache(SyncCacheGenericOperations(), SyncCacheKey, ValType)) !void {
+            _ = a;
+            var parser = try ProtocolParser.init(test_allocator, conn, 500);
+            var parser_state = ProtocolParser.ParserState.parsing;
+            while (try parser.buffTcpParse()) {
+                while (try parser.parse(&parser_state)) {
+                    if (parser_state == ProtocolParser.ParserState.done) {
+                        switch (parser.temp_parsing_prot_msg.op_code) {
+                            CacheOperation.pullByKey => {
+                                return CacheClientErr.OperationNotSupported;
+                            },
+                            CacheOperation.pushKeyVal => {
+                                return CacheClientErr.OperationNotSupported;
+                            },
+                            CacheOperation.pullByKeyReply => {
+                                // try sync_cache.addKeyVal(parser.temp_parsing_prot_msg.key, parser.temp_parsing_prot_msg.val);
+                                _ = sync_cache;
+                            },
+                        }
+                    }
+                }
+            }
+        }
+
+        fn SyncCacheGenericOperations() type {
+            return struct {
+                pub fn eql(k1: SyncCacheKey, k2: SyncCacheKey) bool {
+                    return mem.eql(u8, k1.key, k2.key);
+                }
+
+                pub fn freeKey(a: Allocator, key: anytype) void {
+                    a.free(key);
+                }
+
+                pub fn freeVal(a: Allocator, val: anytype) void {
+                    a.free(val);
+                }
+
+                pub fn serializeKey(key: SyncCacheKey) []u8 {
+                    return key.key;
+                }
+
+                pub fn deserializeKey(key: SyncCacheKey) []u8 {
+                    return key.key;
+                }
+
+                pub fn serializeVal(val: anytype) []u8 {
+                    return val;
+                }
+
+                pub fn deserializeVal(val: anytype) []u8 {
+                    return val;
+                }
+            };
         }
     };
 }

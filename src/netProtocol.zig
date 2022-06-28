@@ -56,13 +56,13 @@ pub const ProtocolParser = struct {
     last_msg_index: usize,
 
     // relevant buffParse fn
-    conn: net.StreamServer.Connection,
+    conn: net.Stream,
     buff: [buff_size]u8,
     read_size: usize,
     append_tcp_buff: bool,
     merge_size: usize,
 
-    pub fn init(a: Allocator, conn: net.StreamServer.Connection, merge_buff_size: usize) !ProtocolParser {
+    pub fn init(a: Allocator, conn: net.Stream, merge_buff_size: usize) !ProtocolParser {
         return ProtocolParser{
             .a = a,
             .temp_parsing_prot_msg = .{ .op_code = undefined, .key = undefined, .val = undefined },
@@ -86,12 +86,12 @@ pub const ProtocolParser = struct {
     pub fn buffTcpParse(self: *ProtocolParser) !bool {
         if (self.append_tcp_buff) {
             self.merge_size = self.read_size - self.msgs_parsed_index;
-            self.read_size = try self.conn.stream.read(self.buff[self.merge_size..]);
+            self.read_size = try self.conn.read(self.buff[self.merge_size..]);
             mem.copy(u8, &self.buff, self.merge_buff[0..self.merge_size]);
             self.read_size += self.merge_size;
             self.append_tcp_buff = false;
         } else {
-            self.read_size = try self.conn.stream.read(&self.buff);
+            self.read_size = try self.conn.read(&self.buff);
         }
         if (self.read_size == 0) {
             return false;
@@ -133,7 +133,7 @@ pub const ProtocolParser = struct {
                 self.next_step_index += 2;
             },
             ParserStep.parsingKeySize => {
-                self.temp_parsing_prot_msg.key.len = mem.readIntSlice(u16, self.buff[self.next_step_index - 2 .. self.next_step_index], native_endian);
+                self.temp_parsing_prot_msg.key.len = mem.readIntSliceNative(u16, self.buff[self.next_step_index - 2 .. self.next_step_index]);
                 self.step = ParserStep.parsingKey;
                 self.next_step_index += self.temp_parsing_prot_msg.key.len;
             },
@@ -144,7 +144,7 @@ pub const ProtocolParser = struct {
                 self.next_step_index += 2;
             },
             ParserStep.parsingValSize => {
-                self.temp_parsing_prot_msg.val.len = mem.readIntSlice(u16, self.buff[self.next_step_index - 2 .. self.next_step_index], native_endian);
+                self.temp_parsing_prot_msg.val.len = mem.readIntSliceNative(u16, self.buff[self.next_step_index - 2 .. self.next_step_index]);
                 self.step = ParserStep.parsingVal;
                 self.next_step_index += self.temp_parsing_prot_msg.val.len;
             },
@@ -172,12 +172,12 @@ pub const ProtocolParser = struct {
         var mem_size = 1 + 2 + to_encode.key.len + 2 + to_encode.val.len;
         var encoded_msg = try a.alloc(u8, mem_size);
 
-        mem.writeIntSlice(u8, encoded_msg[0..1], @enumToInt(to_encode.op_code), native_endian);
+        mem.writeIntSliceNative(u8, encoded_msg[0..1], @enumToInt(to_encode.op_code));
 
-        mem.writeIntSlice(u16, encoded_msg[1..3], @truncate(u16, to_encode.key.len), native_endian);
+        mem.writeIntSliceNative(u16, encoded_msg[1..3], @truncate(u16, to_encode.key.len));
         mem.copy(u8, encoded_msg[3 .. to_encode.key.len + 3], to_encode.key);
 
-        mem.writeIntSlice(u16, encoded_msg[3 + to_encode.key.len .. 3 + to_encode.key.len + 2], @truncate(u16, to_encode.val.len), native_endian);
+        mem.writeIntSliceNative(u16, encoded_msg[3 + to_encode.key.len .. 3 + to_encode.key.len + 2], @truncate(u16, to_encode.val.len));
         mem.copy(u8, encoded_msg[3 + 2 + to_encode.key.len .. 3 + 2 + to_encode.key.len + to_encode.val.len], to_encode.val);
 
         // if (native_endian == .Little) {
@@ -197,8 +197,10 @@ test "test protocol parsing" {
     defer test_allocator.free(en_msg);
 
     var parser = try ProtocolParser.init(test_allocator, undefined, 500);
-    mem.copy(u8, &parser.buff, en_msg);
     defer parser.deinit();
+
+    mem.copy(u8, &parser.buff, en_msg);
+    parser.read_size = en_msg.len;
     var parser_state = ProtocolParser.ParserState.parsing;
     // if (native_endian == .Little) {
     //     mem.reverse(u8, en_msg);
@@ -211,6 +213,7 @@ test "test protocol parsing" {
         }
     }
 
+    try expect(parser_state == ProtocolParser.ParserState.done);
     try expect(parser.temp_parsing_prot_msg.op_code == ProtocolParser.CacheOperation.pushKeyVal);
     try expect(mem.eql(u8, parser.temp_parsing_prot_msg.key, &key));
     try expect(mem.eql(u8, parser.temp_parsing_prot_msg.val, &val));
