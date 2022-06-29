@@ -107,8 +107,8 @@ pub const ProtocolParser = struct {
         self.last_msg_index = 0;
         self.step = ProtocolParser.ParserStep.parsingOpCode;
 
-        // self.temp_parsing_prot_msg.key = null;
-        // self.temp_parsing_prot_msg.val = null;
+        self.temp_parsing_prot_msg.key = null;
+        self.temp_parsing_prot_msg.val = null;
 
         return true;
     }
@@ -133,6 +133,7 @@ pub const ProtocolParser = struct {
             p_state.* = ParserState.waiting;
             return false;
         }
+
         switch (self.step) {
             ParserStep.parsingOpCode => {
                 self.temp_parsing_prot_msg.op_code = @intToEnum(CacheOperation, self.buff[self.next_step_index - 1]);
@@ -146,11 +147,10 @@ pub const ProtocolParser = struct {
             },
             ParserStep.parsingKey => {
                 if (self.temp_parsing_prot_msg.key_size != 0) {
-                    self.temp_parsing_prot_msg.key = try self.a.alloc(u8, self.temp_parsing_prot_msg.key_size);
-                    mem.copy(u8, self.temp_parsing_prot_msg.key.?, self.buff[self.next_step_index - self.temp_parsing_prot_msg.key_size .. self.next_step_index]);
-                    self.step = ParserStep.parsingValSize;
-                    self.next_step_index += 2;
+                    self.temp_parsing_prot_msg.key = self.buff[self.next_step_index - self.temp_parsing_prot_msg.key_size .. self.next_step_index];
                 }
+                self.step = ParserStep.parsingValSize;
+                self.next_step_index += 2;
             },
             ParserStep.parsingValSize => {
                 self.temp_parsing_prot_msg.val_size = mem.readIntSliceNative(u16, self.buff[self.next_step_index - 2 .. self.next_step_index]);
@@ -159,11 +159,10 @@ pub const ProtocolParser = struct {
             },
             ParserStep.parsingVal => {
                 if (self.temp_parsing_prot_msg.val_size != 0) {
-                    self.temp_parsing_prot_msg.val = try self.a.alloc(u8, self.temp_parsing_prot_msg.val_size);
-                    mem.copy(u8, self.temp_parsing_prot_msg.val.?, self.buff[self.next_step_index - self.temp_parsing_prot_msg.val_size .. self.next_step_index]);
-                    self.step = ParserStep.done;
-                    self.next_step_index += 1;
+                    self.temp_parsing_prot_msg.val = self.buff[self.next_step_index - self.temp_parsing_prot_msg.val_size .. self.next_step_index];
                 }
+                self.step = ParserStep.done;
+                self.next_step_index += 1;
             },
             ParserStep.done => {},
         }

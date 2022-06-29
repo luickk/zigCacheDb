@@ -31,10 +31,6 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
             return Self{ .port = port, .cache = LocalCache(KeyValGenericMixin, KeyType, ValType).init(a), .server = net.StreamServer.init(.{ .reuse_address = true }), .a = a };
         }
 
-        pub fn debugPrintLocalCache(self: *Self) void {
-            self.cache.debugPrintCache();
-        }
-
         pub fn startInstance(self: *Self) !std.Thread {
             try self.server.listen(try net.Address.parseIp("127.0.0.1", self.port));
             return try std.Thread.spawn(.{}, start, .{ self.a, &self.server, &self.cache });
@@ -49,7 +45,7 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
         pub fn deinit(self: *Self) void {
             for (self.cache.key_val_store.items) |key_val| {
                 KeyValGenericMixin.freeKey(self.a, key_val.key);
-                KeyValGenericMixin.freeKey(self.a, key_val.val);
+                KeyValGenericMixin.freeVal(self.a, key_val.val);
             }
             // does not deinit KeyVal pairs!
             self.cache.deinit();
@@ -64,16 +60,18 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
                     if (parser_state == ParserState.done) {
                         switch (parser.temp_parsing_prot_msg.op_code) {
                             CacheOperation.pullByKey => {
-                                if (cache.getValByKey(parser.temp_parsing_prot_msg.key.?)) |val| {
-                                    _ = val;
-                                    // todo => ensure complete write
-                                    _ = try parser.conn.write(try ProtocolParser.encode(a, &.{ .op_code = CacheOperation.pullByKeyReply, .key = parser.temp_parsing_prot_msg.key, .val = parser.temp_parsing_prot_msg.val }));
-                                } else {
-                                    // todo => return key not foudn msg
+                                // todo => ensure complete write
+                                var deref_val: ?[]u8 = null;
+                                var key = try KeyValGenericMixin.deserializeKey(a, parser.temp_parsing_prot_msg.key.?);
+                                defer a.free(key);
+                                if (cache.getValByKey(key)) |val| {
+                                    deref_val = KeyValGenericMixin.serializeKey(val.*);
                                 }
+                                _ = try parser.conn.write(try ProtocolParser.encode(a, &.{ .op_code = CacheOperation.pullByKeyReply, .key = KeyValGenericMixin.serializeKey(parser.temp_parsing_prot_msg.key.?), .val = deref_val }));
                             },
+                            // todo => handle overwrites
                             CacheOperation.pushKeyVal => {
-                                try cache.addKeyVal(KeyValGenericMixin.deserializeKey(parser.temp_parsing_prot_msg.key.?), KeyValGenericMixin.deserializeVal(parser.temp_parsing_prot_msg.val.?));
+                                try cache.addKeyVal(try KeyValGenericMixin.deserializeKey(a, parser.temp_parsing_prot_msg.key.?), try KeyValGenericMixin.deserializeVal(a, parser.temp_parsing_prot_msg.val.?));
                             },
                             CacheOperation.pullByKeyReply => {
                                 return RemoteCacheInstanceErr.OperationNotSupported;

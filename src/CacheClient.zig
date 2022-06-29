@@ -26,13 +26,19 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
         addr: net.Address,
         conn: net.Stream,
         a: Allocator,
-        sync_cache: LocalCache(SyncCacheGenericOperations(), KeyType, SyncCacheVal),
+        sync_cache: LocalCache(KeyValGenericMixin, KeyType, SyncCacheVal),
 
         pub fn init(a: Allocator, addr: net.Address) Self {
-            return Self{ .a = a, .addr = addr, .conn = undefined, .sync_cache = LocalCache(SyncCacheGenericOperations(), KeyType, SyncCacheVal).init(a) };
+            return Self{ .a = a, .addr = addr, .conn = undefined, .sync_cache = LocalCache(KeyValGenericMixin, KeyType, SyncCacheVal).init(a) };
         }
 
         pub fn deinit(self: Self) void {
+            for (self.sync_cache.key_val_store.items) |key_val| {
+                KeyValGenericMixin.freeKey(self.a, key_val.key);
+                if (key_val.val.val) |val| {
+                    KeyValGenericMixin.freeVal(self.a, val);
+                }
+            }
             self.conn.close();
         }
 
@@ -43,9 +49,7 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
         }
 
         pub fn pushKeyVal(self: *Self, key: KeyType, val: ValType) !void {
-            var sK = KeyValGenericMixin.serializeKey(key);
-            var sV = KeyValGenericMixin.serializeKey(val);
-            var msg = ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = sK, .val = sV };
+            var msg = ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = KeyValGenericMixin.serializeKey(key), .val = KeyValGenericMixin.serializeVal(val) };
             var msg_encoded = try ProtocolParser.encode(self.a, &msg);
             // todo => check if write is completed...
             _ = try self.conn.write(msg_encoded);
@@ -53,18 +57,23 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
 
         pub fn pullValByKey(self: *Self, key: KeyType) !?ValType {
             // todo => ensure complete write
-            _ = try self.conn.write(try ProtocolParser.encode(self.a, &ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pullByKey, .key = key, .val = undefined }));
+            _ = try self.conn.write(try ProtocolParser.encode(self.a, &ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pullByKey, .key = KeyValGenericMixin.serializeKey(key), .val = null }));
 
-            if (self.sync_cache.getValByKey(key)) |*val| {
-                val.broadcast.wait(&val.bc_mutex);
-                return val.val;
-            } else {
-                try self.sync_cache.addKeyVal(key, SyncCacheVal{ .val = null, .broadcast = .{}, .bc_mutex = .{} });
+            if (self.sync_cache.getValByKey(key) == null) {
+                var key_clone = try self.a.alloc(u8, key.len);
+                mem.copy(u8, key_clone, key);
+                try self.sync_cache.addKeyVal(key_clone, SyncCacheVal{ .val = null, .broadcast = .{}, .bc_mutex = .{} });
             }
-            return null;
+            var val = self.sync_cache.getValByKey(key).?;
+            val.bc_mutex.lock();
+            while (val.val == null) {
+                val.broadcast.wait(&val.bc_mutex);
+            }
+            val.bc_mutex.unlock();
+            return val.val;
         }
 
-        fn serverHandle(conn: net.Stream, a: Allocator, sync_cache: *LocalCache(SyncCacheGenericOperations(), KeyType, SyncCacheVal)) !void {
+        fn serverHandle(conn: net.Stream, a: Allocator, sync_cache: *LocalCache(KeyValGenericMixin, KeyType, SyncCacheVal)) !void {
             _ = a;
             var parser = try ProtocolParser.init(test_allocator, conn, 500);
             var parser_state = ProtocolParser.ParserState.parsing;
@@ -78,45 +87,25 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
                             CacheOperation.pushKeyVal => {
                                 return CacheClientErr.OperationNotSupported;
                             },
+                            // todo => free key/val if pulled twice
                             CacheOperation.pullByKeyReply => {
-                                if (try sync_cache.exists(parser.temp_parsing_prot_msg.key.?)) {}
+                                var key = try KeyValGenericMixin.deserializeKey(a, parser.temp_parsing_prot_msg.key.?);
+                                defer a.free(key);
+                                if (sync_cache.getValByKey(key)) |val| {
+                                    val.bc_mutex.lock();
+                                    if (parser.temp_parsing_prot_msg.val) |msg_val| {
+                                        val.val = try KeyValGenericMixin.deserializeVal(a, msg_val);
+                                    } else {
+                                        val.val = null;
+                                    }
+                                    val.broadcast.broadcast();
+                                    val.bc_mutex.unlock();
+                                }
                             },
                         }
                     }
                 }
             }
-        }
-
-        fn SyncCacheGenericOperations() type {
-            return struct {
-                pub fn eql(k1: anytype, k2: anytype) bool {
-                    return mem.eql(u8, k1, k2);
-                }
-
-                pub fn freeKey(a: Allocator, key: anytype) void {
-                    a.free(key);
-                }
-
-                pub fn freeVal(a: Allocator, val: anytype) void {
-                    a.free(val);
-                }
-
-                pub fn serializeKey(key: anytype) []u8 {
-                    return key.key;
-                }
-
-                pub fn deserializeKey(key: anytype) []u8 {
-                    return key.key;
-                }
-
-                pub fn serializeVal(val: anytype) []u8 {
-                    return val.val;
-                }
-
-                pub fn deserializeVal(val: anytype) []u8 {
-                    return val.val;
-                }
-            };
         }
     };
 }

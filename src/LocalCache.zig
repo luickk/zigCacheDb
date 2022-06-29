@@ -35,13 +35,13 @@ pub fn LocalCache(comptime KeyValGenericMixin: type, comptime KeyType: type, com
             self.key_val_store_mutex.unlock();
         }
 
-        pub fn getValByKey(self: *Self, key: KeyType) ?ValType {
+        pub fn getValByKey(self: *Self, key: KeyType) ?*ValType {
             self.key_val_store_mutex.lock();
             defer self.key_val_store_mutex.unlock();
 
-            for (self.key_val_store.items) |key_val| {
+            for (self.key_val_store.items) |*key_val| {
                 if (KeyValGenericMixin.eql(key_val.key, key)) {
-                    return key_val.val;
+                    return &key_val.val;
                 }
             }
             return null;
@@ -51,19 +51,6 @@ pub fn LocalCache(comptime KeyValGenericMixin: type, comptime KeyType: type, com
             self.key_val_store_mutex.lock();
             defer self.key_val_store_mutex.unlock();
             return self.key_val_store.items.len;
-        }
-
-        pub fn debugPrintCache(self: *Self) void {
-            self.key_val_store_mutex.lock();
-            defer self.key_val_store_mutex.unlock();
-
-            // todo => make print generic
-            print("--------------------------------------------\n", .{});
-            for (self.key_val_store.items) |key_val| {
-                print("key: {s}         val: {s} \n", .{ key_val.key, key_val.val });
-            }
-            print("n pairs: {d}", .{self.key_val_store.items.len});
-            print("--------------------------------------------\n", .{});
         }
 
         pub fn exists(self: *Self, key: KeyType) !bool {

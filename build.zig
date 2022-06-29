@@ -35,6 +35,6 @@ pub fn build(b: *std.build.Builder) void {
     integration_pull_test.install();
 
     const itest_step = b.step("itest", "Run library integration tests");
-    // itest_step.dependOn(&integration_pull_test.run().step);
+    itest_step.dependOn(&integration_pull_test.run().step);
     itest_step.dependOn(&integration_push_test.run().step);
 }
