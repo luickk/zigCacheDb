@@ -16,12 +16,12 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
     const SyncCacheVal = struct {
         val: ?ValType,
         broadcast: std.Thread.Condition,
+        bc_sync: u8,
         bc_mutex: std.Thread.Mutex,
     };
     return struct {
         const Self = @This();
-        const buff_size = 500;
-        const CacheClientErr = error{OperationNotSupported};
+        const CacheClientErr = error{ OperationNotSupported, TCPWriteErr };
 
         addr: net.Address,
         conn: net.Stream,
@@ -32,13 +32,14 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
             return Self{ .a = a, .addr = addr, .conn = undefined, .sync_cache = LocalCache(KeyValGenericMixin, KeyType, SyncCacheVal).init(a) };
         }
 
-        pub fn deinit(self: Self) void {
+        pub fn deinit(self: *Self) void {
             for (self.sync_cache.key_val_store.items) |key_val| {
                 KeyValGenericMixin.freeKey(self.a, key_val.key);
                 if (key_val.val.val) |val| {
                     KeyValGenericMixin.freeVal(self.a, val);
                 }
             }
+            self.sync_cache.deinit();
             self.conn.close();
         }
 
@@ -51,30 +52,38 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
         pub fn pushKeyVal(self: *Self, key: KeyType, val: ValType) !void {
             var msg = ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = KeyValGenericMixin.serializeKey(key), .val = KeyValGenericMixin.serializeVal(val) };
             var msg_encoded = try ProtocolParser.encode(self.a, &msg);
-            // todo => check if write is completed...
-            _ = try self.conn.write(msg_encoded);
+            if ((try self.conn.write(msg_encoded)) != msg_encoded.len) {
+                return CacheClientErr.TCPWriteErr;
+            }
+            self.a.free(msg_encoded);
         }
 
         pub fn pullValByKey(self: *Self, key: KeyType) !?ValType {
-            // todo => ensure complete write
-            _ = try self.conn.write(try ProtocolParser.encode(self.a, &ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pullByKey, .key = KeyValGenericMixin.serializeKey(key), .val = null }));
+            var msg_encoded = try ProtocolParser.encode(self.a, &ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pullByKey, .key = KeyValGenericMixin.serializeKey(key), .val = null });
+            if ((try self.conn.write(msg_encoded)) != msg_encoded.len) {
+                return CacheClientErr.TCPWriteErr;
+            }
+            self.a.free(msg_encoded);
 
             if (self.sync_cache.getValByKey(key) == null) {
                 var key_clone = try self.a.alloc(u8, key.len);
                 mem.copy(u8, key_clone, key);
-                try self.sync_cache.addKeyVal(key_clone, SyncCacheVal{ .val = null, .broadcast = .{}, .bc_mutex = .{} });
+                try self.sync_cache.addKeyVal(key_clone, SyncCacheVal{ .val = null, .broadcast = .{}, .bc_sync = 0, .bc_mutex = .{} });
             }
             var val = self.sync_cache.getValByKey(key).?;
             val.bc_mutex.lock();
-            while (val.val == null) {
+            while (val.bc_sync == 0) {
                 val.broadcast.wait(&val.bc_mutex);
             }
+            val.bc_sync = 0;
             val.bc_mutex.unlock();
-            return val.val;
+
+            var return_val = val.val;
+            val.val = null;
+            return return_val;
         }
 
         fn serverHandle(conn: net.Stream, a: Allocator, sync_cache: *LocalCache(KeyValGenericMixin, KeyType, SyncCacheVal)) !void {
-            _ = a;
             var parser = try ProtocolParser.init(test_allocator, conn, 500);
             var parser_state = ProtocolParser.ParserState.parsing;
             while (try parser.buffTcpParse()) {
@@ -87,17 +96,15 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
                             CacheOperation.pushKeyVal => {
                                 return CacheClientErr.OperationNotSupported;
                             },
-                            // todo => free key/val if pulled twice
                             CacheOperation.pullByKeyReply => {
-                                var key = try KeyValGenericMixin.deserializeKey(a, parser.temp_parsing_prot_msg.key.?);
-                                defer a.free(key);
-                                if (sync_cache.getValByKey(key)) |val| {
+                                if (sync_cache.getValByKey(KeyValGenericMixin.tempDeserializeKey(parser.temp_parsing_prot_msg.key.?))) |val| {
                                     val.bc_mutex.lock();
                                     if (parser.temp_parsing_prot_msg.val) |msg_val| {
                                         val.val = try KeyValGenericMixin.deserializeVal(a, msg_val);
                                     } else {
                                         val.val = null;
                                     }
+                                    val.bc_sync = 1;
                                     val.broadcast.broadcast();
                                     val.bc_mutex.unlock();
                                 }

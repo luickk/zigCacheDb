@@ -17,10 +17,9 @@ const Allocator = std.mem.Allocator;
 const LocalCache = @import("LocalCache.zig").LocalCache;
 
 pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: type, comptime ValType: type) type {
-    const RemoteCacheInstanceErr = error{OperationNotSupported};
-
     return struct {
         const Self = @This();
+        const RemoteCacheInstanceErr = error{ OperationNotSupported, TCPWriteErr };
 
         port: u16,
         cache: LocalCache(KeyValGenericMixin, KeyType, ValType),
@@ -60,18 +59,26 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
                     if (parser_state == ParserState.done) {
                         switch (parser.temp_parsing_prot_msg.op_code) {
                             CacheOperation.pullByKey => {
-                                // todo => ensure complete write
                                 var deref_val: ?[]u8 = null;
                                 var key = try KeyValGenericMixin.deserializeKey(a, parser.temp_parsing_prot_msg.key.?);
-                                defer a.free(key);
+                                defer KeyValGenericMixin.freeKey(a, key);
                                 if (cache.getValByKey(key)) |val| {
                                     deref_val = KeyValGenericMixin.serializeKey(val.*);
                                 }
-                                _ = try parser.conn.write(try ProtocolParser.encode(a, &.{ .op_code = CacheOperation.pullByKeyReply, .key = KeyValGenericMixin.serializeKey(parser.temp_parsing_prot_msg.key.?), .val = deref_val }));
+                                // optional optimisation for .encode possible (use of buffer instead of expensive iterative allocation)
+                                var msg_encoded = try ProtocolParser.encode(a, &.{ .op_code = CacheOperation.pullByKeyReply, .key = KeyValGenericMixin.serializeKey(parser.temp_parsing_prot_msg.key.?), .val = deref_val });
+                                if ((try parser.conn.write(msg_encoded)) != msg_encoded.len) {
+                                    return RemoteCacheInstanceErr.TCPWriteErr;
+                                }
+                                a.free(msg_encoded);
                             },
-                            // todo => handle overwrites
                             CacheOperation.pushKeyVal => {
-                                try cache.addKeyVal(try KeyValGenericMixin.deserializeKey(a, parser.temp_parsing_prot_msg.key.?), try KeyValGenericMixin.deserializeVal(a, parser.temp_parsing_prot_msg.val.?));
+                                if (cache.getValByKey(KeyValGenericMixin.tempDeserializeKey(parser.temp_parsing_prot_msg.key.?))) |val| {
+                                    KeyValGenericMixin.freeVal(a, val.*);
+                                    val.* = try KeyValGenericMixin.deserializeVal(a, parser.temp_parsing_prot_msg.val.?);
+                                } else {
+                                    try cache.addKeyVal(try KeyValGenericMixin.deserializeKey(a, parser.temp_parsing_prot_msg.key.?), try KeyValGenericMixin.deserializeVal(a, parser.temp_parsing_prot_msg.val.?));
+                                }
                             },
                             CacheOperation.pullByKeyReply => {
                                 return RemoteCacheInstanceErr.OperationNotSupported;
@@ -85,5 +92,3 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
         pub usingnamespace KeyValGenericMixin;
     };
 }
-
-test "basic RemoteCacheInstance test" {}

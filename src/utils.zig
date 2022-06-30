@@ -6,13 +6,6 @@ pub fn memToSlice(comptime T: type, ptr: [*]T, len: usize) []T {
     return @ptrCast(*[]T, &.{ .ptr = ptr, .len = len }).*;
 }
 
-pub fn sliceSwap(comptime T: type, inp: []T) void {
-    for (inp) |*c| {
-        print("swapping {b} - {b} \n", .{ c.*, @byteSwap(T, c.*) });
-        c.* = @byteSwap(T, c.*);
-    }
-}
-
 pub fn reverse_string(str: [*]u8, len: usize) void {
     var start: usize = 0;
     var end: usize = len - 1;

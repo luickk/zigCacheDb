@@ -113,5 +113,5 @@ test "basic LocalCache test" {
     try cache.addKeyVal(&t1, &testVal);
     var res = cache.getValByKey(&t1) orelse unreachable;
 
-    try expect(mem.eql(u8, res, "testVal"));
+    try expect(mem.eql(u8, res.*, "testVal"));
 }

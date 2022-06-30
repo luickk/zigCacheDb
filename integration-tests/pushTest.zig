@@ -12,7 +12,16 @@ const RemoteCacheInstance = src.RemoteCacheInstance;
 const CacheClient = src.CacheClient;
 
 pub fn main() !void {
-    var remote_cache = RemoteCacheInstance(KeyValGenericOperations([]u8, []u8), []u8, []u8).init(test_allocator, 8888);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa_allocator = gpa.allocator();
+    defer {
+        const leaked = gpa.deinit();
+        if (leaked) std.testing.expect(false) catch @panic("TEST FAIL");
+    }
+
+    const test_data_set_size = 50;
+
+    var remote_cache = RemoteCacheInstance(KeyValGenericOperations([]u8, []u8), []u8, []u8).init(gpa_allocator, 8888);
     defer remote_cache.deinit();
 
     var remote_cache_thread = try remote_cache.startInstance();
@@ -22,26 +31,30 @@ pub fn main() !void {
     time.sleep(time.ns_per_s * 0.1);
 
     var addr = try std.net.Address.parseIp("127.0.0.1", 8888);
-    var client = CacheClient(KeyValGenericOperations([]u8, []u8), []u8, []u8).init(test_allocator, addr);
+    var client = CacheClient(KeyValGenericOperations([]u8, []u8), []u8, []u8).init(gpa_allocator, addr);
     defer client.deinit();
 
     try client.connectToServer();
-    print("---------- PUSH integration test ----------  \n", .{});
-    print("client connected \n", .{});
 
-    for ((try test_utils.createTestSet(test_allocator, 50)).items) |*item| {
+    var data_set = try test_utils.createTestSet(gpa_allocator, test_data_set_size);
+    defer data_set.deinit();
+    for (data_set.items) |*item, i| {
         try client.pushKeyVal(item[0][0..], item[1][0..]);
+        if (i == test_data_set_size - 1) {
+            // push twice on last iter
+            try client.pushKeyVal(item[0][0..], item[1][0..]);
+        }
     }
-    print("keys pushed \n", .{});
 
     time.sleep(time.ns_per_s * 0.5);
 
-    if (remote_cache.cache.getNKeyVal() == 50) {
-        print("push test successfull \n", .{});
+    if (remote_cache.cache.getNKeyVal() == test_data_set_size) {
+        print("- push test successfull \n", .{});
+        return;
     } else {
-        print("push test failed \n", .{});
+        print("- push test failed \n", .{});
+        return;
     }
-    print("---------- PUSH integration test ----------  \n", .{});
     return;
 }
 
@@ -69,6 +82,11 @@ fn KeyValGenericOperations(comptime KeyType: type, comptime ValType: type) type 
             var alloced_key = try a.alloc(u8, key.len);
             std.mem.copy(u8, alloced_key, key);
             return alloced_key;
+        }
+
+        // ! must NOT allocate on heap; free is not invoked !!
+        pub fn tempDeserializeKey(key: []u8) KeyType {
+            return key;
         }
 
         // must NOT be alloce; free is not invoked

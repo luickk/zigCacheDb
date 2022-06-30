@@ -2,6 +2,7 @@ const std = @import("std");
 const time = std.time;
 const mem = std.mem;
 const print = std.debug.print;
+
 const test_allocator = std.testing.allocator;
 const Allocator = std.mem.Allocator;
 
@@ -12,12 +13,24 @@ const RemoteCacheInstance = src.RemoteCacheInstance;
 const CacheClient = src.CacheClient;
 
 pub fn main() !void {
-    var remote_cache = RemoteCacheInstance(KeyValGenericOperations([]u8, []u8), []u8, []u8).init(test_allocator, 8888);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa_allocator = gpa.allocator();
+    defer {
+        const leaked = gpa.deinit();
+        if (leaked) std.testing.expect(false) catch @panic("TEST FAIL");
+    }
+
+    const test_data_set_size = 50;
+
+    var remote_cache = RemoteCacheInstance(KeyValGenericOperations([]u8, []u8), []u8, []u8).init(gpa_allocator, 8888);
     defer remote_cache.deinit();
 
-    for ((try test_utils.createTestSet(test_allocator, 50)).items) |*item| {
-        var tset_key_a: []u8 = try test_allocator.alloc(u8, item[0][0..].len);
-        var tset_val_a: []u8 = try test_allocator.alloc(u8, item[1][0..].len);
+    // "adding" data-set to server by adding it to its local cache (since it's a pull and not a push test...)
+    var data_set = try test_utils.createTestSet(gpa_allocator, test_data_set_size);
+    defer data_set.deinit();
+    for (data_set.items) |*item| {
+        var tset_key_a: []u8 = try gpa_allocator.alloc(u8, item[0][0..].len);
+        var tset_val_a: []u8 = try gpa_allocator.alloc(u8, item[1][0..].len);
         mem.copy(u8, tset_key_a, item[0][0..]);
         mem.copy(u8, tset_val_a, item[1][0..]);
         try remote_cache.cache.addKeyVal(tset_key_a, tset_val_a);
@@ -30,27 +43,50 @@ pub fn main() !void {
     time.sleep(time.ns_per_s * 0.1);
 
     var addr = try std.net.Address.parseIp("127.0.0.1", 8888);
-    var client = CacheClient(KeyValGenericOperations([]u8, []u8), []u8, []u8).init(test_allocator, addr);
+    var client = CacheClient(KeyValGenericOperations([]u8, []u8), []u8, []u8).init(gpa_allocator, addr);
     defer client.deinit();
 
     try client.connectToServer();
-    print("---------- PULL integration test ----------  \n", .{});
-    print("client connected \n", .{});
 
-    for ((try test_utils.createTestSet(test_allocator, 50)).items) |*item, i| {
-        var pull_val = (try client.pullValByKey(item[0][0..])) orelse {
-            print("pull test failed(val not correct) \n", .{});
-            break;
-        };
-        if (!mem.eql(u8, pull_val, item[1][0..])) {
-            print("pull test failed \n", .{});
-            break;
+    var i_c: usize = 0;
+
+    for (data_set.items) |*item, i| {
+        if (try client.pullValByKey(item[0][0..])) |pull_val| {
+            if (!mem.eql(u8, pull_val, item[1][0..])) {
+                print("- pull test failed(val not correct) \n", .{});
+                return;
+            }
+            KeyValGenericOperations([]u8, []u8).freeVal(client.a, pull_val);
+        } else {
+            print("- pull test failed \n", .{});
+            return;
         }
-        if (i == 49) {
-            print("pull test successfull \n", .{});
+
+        // pulling same key twice on last iteration
+        if (i == test_data_set_size - 1) {
+            if (try client.pullValByKey(item[0][0..])) |pull_val| {
+                if (!mem.eql(u8, pull_val, item[1][0..])) {
+                    print("- pull test failed(val not correct; on second pull) \n", .{});
+                    return;
+                }
+                KeyValGenericOperations([]u8, []u8).freeVal(client.a, pull_val);
+            } else {
+                print("- pull test failed (second pull) \n", .{});
+                return;
+            }
         }
+        i_c = i;
     }
-    print("---------- PULL integration test ----------  \n", .{});
+    if (i_c == test_data_set_size - 1) {
+        print("- pull test successfull \n", .{});
+        return;
+    }
+
+    var key_not_exists = "key".*;
+    if ((try client.pullValByKey(&key_not_exists)) != null) {
+        print("- pull test failed (key that shouldn't exist, exists) \n", .{});
+        return;
+    }
 }
 
 fn KeyValGenericOperations(comptime KeyType: type, comptime ValType: type) type {
@@ -77,6 +113,11 @@ fn KeyValGenericOperations(comptime KeyType: type, comptime ValType: type) type 
             var alloced_key = try a.alloc(u8, key.len);
             std.mem.copy(u8, alloced_key, key);
             return alloced_key;
+        }
+
+        // ! must NOT allocate on heap; free is not invoked !!
+        pub fn tempDeserializeKey(key: []u8) KeyType {
+            return key;
         }
 
         // must NOT be alloce; free is not invoked

@@ -110,6 +110,10 @@ pub const ProtocolParser = struct {
         self.temp_parsing_prot_msg.key = null;
         self.temp_parsing_prot_msg.val = null;
 
+        // if (native_endian == .Little) {
+        //     mem.reverse(u8, self.buff[0..self.read_size]);
+        // }
+
         return true;
     }
 
@@ -216,7 +220,7 @@ pub const ProtocolParser = struct {
 test "test protocol parsing" {
     var key = "test".*;
     var val = "123456789".*;
-    var msg = ProtocolParser.protMsg{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = &key, .val = &val };
+    var msg = ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = &key, .val = &val };
 
     var en_msg = try ProtocolParser.encode(test_allocator, &msg);
     defer test_allocator.free(en_msg);
@@ -240,8 +244,6 @@ test "test protocol parsing" {
 
     try expect(parser_state == ProtocolParser.ParserState.done);
     try expect(parser.temp_parsing_prot_msg.op_code == ProtocolParser.CacheOperation.pushKeyVal);
-    try expect(mem.eql(u8, parser.temp_parsing_prot_msg.key, &key));
-    try expect(mem.eql(u8, parser.temp_parsing_prot_msg.val, &val));
-    test_allocator.free(parser.temp_parsing_prot_msg.key);
-    test_allocator.free(parser.temp_parsing_prot_msg.val);
+    try expect(mem.eql(u8, parser.temp_parsing_prot_msg.key.?, &key));
+    try expect(mem.eql(u8, parser.temp_parsing_prot_msg.val.?, &val));
 }
