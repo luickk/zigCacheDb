@@ -60,24 +60,23 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
                         switch (parser.temp_parsing_prot_msg.op_code) {
                             CacheOperation.pullByKey => {
                                 var deref_val: ?[]u8 = null;
-                                var key = try KeyValGenericMixin.deserializeKey(a, parser.temp_parsing_prot_msg.key.?);
-                                defer KeyValGenericMixin.freeKey(a, key);
+                                var key = try KeyValGenericMixin.deserializeKey(parser.temp_parsing_prot_msg.key.?);
                                 if (cache.getValByKey(key)) |val| {
-                                    deref_val = KeyValGenericMixin.serializeKey(val.*);
+                                    deref_val = KeyValGenericMixin.keyRawToSlice(&try KeyValGenericMixin.serializeKey(val.*));
                                 }
                                 // optional optimisation for .encode possible (use of buffer instead of expensive iterative allocation)
-                                var msg_encoded = try ProtocolParser.encode(a, &.{ .op_code = CacheOperation.pullByKeyReply, .key = KeyValGenericMixin.serializeKey(parser.temp_parsing_prot_msg.key.?), .val = deref_val });
+                                var msg_encoded = try ProtocolParser.encode(a, &.{ .op_code = CacheOperation.pullByKeyReply, .key = KeyValGenericMixin.keyRawToSlice(&try KeyValGenericMixin.serializeKey(key)), .val = deref_val });
                                 if ((try parser.conn.write(msg_encoded)) != msg_encoded.len) {
                                     return RemoteCacheInstanceErr.TCPWriteErr;
                                 }
                                 a.free(msg_encoded);
                             },
                             CacheOperation.pushKeyVal => {
-                                if (cache.getValByKey(KeyValGenericMixin.tempDeserializeKey(parser.temp_parsing_prot_msg.key.?))) |val| {
+                                if (cache.getValByKey(try KeyValGenericMixin.deserializeKey(parser.temp_parsing_prot_msg.key.?))) |val| {
                                     KeyValGenericMixin.freeVal(a, val.*);
-                                    val.* = try KeyValGenericMixin.deserializeVal(a, parser.temp_parsing_prot_msg.val.?);
+                                    val.* = try KeyValGenericMixin.cloneVal(a, try KeyValGenericMixin.deserializeVal(parser.temp_parsing_prot_msg.val.?));
                                 } else {
-                                    try cache.addKeyVal(try KeyValGenericMixin.deserializeKey(a, parser.temp_parsing_prot_msg.key.?), try KeyValGenericMixin.deserializeVal(a, parser.temp_parsing_prot_msg.val.?));
+                                    try cache.addKeyVal(try KeyValGenericMixin.cloneKey(a, try KeyValGenericMixin.deserializeKey(parser.temp_parsing_prot_msg.key.?)), try KeyValGenericMixin.cloneVal(a, try KeyValGenericMixin.deserializeVal(parser.temp_parsing_prot_msg.val.?)));
                                 }
                             },
                             CacheOperation.pullByKeyReply => {

@@ -50,7 +50,7 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
         }
 
         pub fn pushKeyVal(self: *Self, key: KeyType, val: ValType) !void {
-            var msg = ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = KeyValGenericMixin.serializeKey(key), .val = KeyValGenericMixin.serializeVal(val) };
+            var msg = ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = KeyValGenericMixin.keyRawToSlice(&try KeyValGenericMixin.serializeKey(key)), .val = KeyValGenericMixin.keyRawToSlice(&try KeyValGenericMixin.serializeVal(val)) };
             var msg_encoded = try ProtocolParser.encode(self.a, &msg);
             if ((try self.conn.write(msg_encoded)) != msg_encoded.len) {
                 return CacheClientErr.TCPWriteErr;
@@ -59,15 +59,14 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
         }
 
         pub fn pullValByKey(self: *Self, key: KeyType) !?ValType {
-            var msg_encoded = try ProtocolParser.encode(self.a, &ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pullByKey, .key = KeyValGenericMixin.serializeKey(key), .val = null });
+            var msg_encoded = try ProtocolParser.encode(self.a, &ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pullByKey, .key = KeyValGenericMixin.keyRawToSlice(&try KeyValGenericMixin.serializeKey(key)), .val = null });
             if ((try self.conn.write(msg_encoded)) != msg_encoded.len) {
                 return CacheClientErr.TCPWriteErr;
             }
             self.a.free(msg_encoded);
 
             if (self.sync_cache.getValByKey(key) == null) {
-                var key_clone = try self.a.alloc(u8, key.len);
-                mem.copy(u8, key_clone, key);
+                var key_clone = try KeyValGenericMixin.cloneKey(self.a, key);
                 try self.sync_cache.addKeyVal(key_clone, SyncCacheVal{ .val = null, .broadcast = .{}, .bc_sync = 0, .bc_mutex = .{} });
             }
             var val = self.sync_cache.getValByKey(key).?;
@@ -97,10 +96,10 @@ pub fn CacheClient(comptime KeyValGenericMixin: type, comptime KeyType: type, co
                                 return CacheClientErr.OperationNotSupported;
                             },
                             CacheOperation.pullByKeyReply => {
-                                if (sync_cache.getValByKey(KeyValGenericMixin.tempDeserializeKey(parser.temp_parsing_prot_msg.key.?))) |val| {
+                                if (sync_cache.getValByKey(try KeyValGenericMixin.deserializeVal(parser.temp_parsing_prot_msg.key.?))) |val| {
                                     val.bc_mutex.lock();
                                     if (parser.temp_parsing_prot_msg.val) |msg_val| {
-                                        val.val = try KeyValGenericMixin.deserializeVal(a, msg_val);
+                                        val.val = try KeyValGenericMixin.cloneVal(a, try KeyValGenericMixin.deserializeVal(msg_val));
                                     } else {
                                         val.val = null;
                                     }

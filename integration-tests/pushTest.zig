@@ -36,7 +36,7 @@ pub fn main() !void {
 
     try client.connectToServer();
 
-    var data_set = try test_utils.createTestSet(gpa_allocator, test_data_set_size);
+    var data_set = try test_utils.createTestSetU8(gpa_allocator, test_data_set_size);
     defer data_set.deinit();
     for (data_set.items) |*item, i| {
         try client.pushKeyVal(item[0][0..], item[1][0..]);
@@ -60,45 +60,56 @@ pub fn main() !void {
 
 fn KeyValGenericOperations(comptime KeyType: type, comptime ValType: type) type {
     return struct {
-        pub fn eql(k1: anytype, k2: anytype) bool {
-            return mem.eql(u8, k1, k2);
-        }
 
-        pub fn freeKey(a: Allocator, key: anytype) void {
+        // If the data contains a pointer and needs memory management, the following fns is required
+        pub fn freeKey(a: Allocator, key: KeyType) void {
             a.free(key);
         }
 
-        pub fn freeVal(a: Allocator, val: anytype) void {
+        pub fn freeVal(a: Allocator, val: ValType) void {
             a.free(val);
         }
 
-        // must NOT be alloce; free is not invoked
-        pub fn serializeKey(key: KeyType) []u8 {
+        pub fn cloneKey(a: Allocator, key: KeyType) !KeyType {
+            var key_clone = try a.alloc(u8, key.len);
+            mem.copy(u8, key_clone, key);
+            return key_clone;
+        }
+
+        pub fn cloneVal(a: Allocator, val: ValType) !ValType {
+            var val_clone = try a.alloc(u8, val.len);
+            mem.copy(u8, val_clone, val);
+            return val_clone;
+        }
+
+        // if the data is kept on the stack and copied around, the following fns are required
+        pub fn keyRawToSlice(key_arr: *[]u8) []u8 {
+            return key_arr.*;
+        }
+
+        pub fn valRawToSlice(val_arr: *[]u8) []u8 {
+            return val_arr.*;
+        }
+
+        // for both kinds of data, the fns below are required
+        pub fn eql(k1: KeyType, k2: KeyType) bool {
+            return mem.eql(u8, k1, k2);
+        }
+
+        pub fn serializeKey(key: KeyType) ![]u8 {
             return key;
         }
 
-        // ! MUST allocate on heap if not static size or type !!
-        pub fn deserializeKey(a: Allocator, key: []u8) !KeyType {
-            var alloced_key = try a.alloc(u8, key.len);
-            std.mem.copy(u8, alloced_key, key);
-            return alloced_key;
-        }
-
-        // ! must NOT allocate on heap; free is not invoked !!
-        pub fn tempDeserializeKey(key: []u8) KeyType {
+        pub fn deserializeKey(key: []u8) !KeyType {
             return key;
         }
 
-        // must NOT be alloce; free is not invoked
-        pub fn serializeVal(val: ValType) []u8 {
+        pub fn serializeVal(val: ValType) ![]u8 {
             return val;
         }
 
-        // ! MUST allocate on heap if not static size(array) or type !!
-        pub fn deserializeVal(a: Allocator, val: []u8) !ValType {
-            var alloced_val = try a.alloc(u8, val.len);
-            std.mem.copy(u8, alloced_val, val);
-            return alloced_val;
+        pub fn deserializeVal(val: []u8) !ValType {
+            return val;
         }
     };
 }
