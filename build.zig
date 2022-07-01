@@ -33,13 +33,13 @@ pub fn build(b: *std.build.Builder) void {
     integration_pull_test.addPackagePath("src", "src/main.zig");
     integration_pull_test.setBuildMode(mode);
     integration_pull_test.install();
-    const integration_pull_push_na_test = b.addExecutable("pushPullNoAllocTest", "integration-tests/pushPullNonAllocTest.zig");
-    integration_pull_push_na_test.addPackagePath("src", "src/main.zig");
-    integration_pull_push_na_test.setBuildMode(mode);
-    integration_pull_push_na_test.install();
+    const integration_pull_push_os_test = b.addExecutable("pushPullNoAllocTest", "integration-tests/pushPullOnStackTest.zig");
+    integration_pull_push_os_test.addPackagePath("src", "src/main.zig");
+    integration_pull_push_os_test.setBuildMode(mode);
+    integration_pull_push_os_test.install();
 
     const itest_step = b.step("itest", "Run library integration tests");
-    itest_step.dependOn(&integration_pull_push_na_test.run().step);
+    itest_step.dependOn(&integration_pull_push_os_test.run().step);
     itest_step.dependOn(&integration_pull_test.run().step);
     itest_step.dependOn(&integration_push_test.run().step);
 

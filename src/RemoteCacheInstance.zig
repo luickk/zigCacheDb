@@ -16,18 +16,18 @@ const Allocator = std.mem.Allocator;
 
 const LocalCache = @import("LocalCache.zig").LocalCache;
 
-pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: type, comptime ValType: type) type {
+pub fn RemoteCacheInstance(comptime CacheDataTypes: type) type {
     return struct {
         const Self = @This();
         const RemoteCacheInstanceErr = error{ OperationNotSupported, TCPWriteErr };
 
         port: u16,
-        cache: LocalCache(KeyValGenericMixin, KeyType, ValType),
+        cache: LocalCache(CacheDataTypes.KeyValGenericFn, CacheDataTypes.KeyType, CacheDataTypes.ValType),
         server: net.StreamServer,
         a: Allocator,
 
         pub fn init(a: Allocator, port: u16) Self {
-            return Self{ .port = port, .cache = LocalCache(KeyValGenericMixin, KeyType, ValType).init(a), .server = net.StreamServer.init(.{ .reuse_address = true }), .a = a };
+            return Self{ .port = port, .cache = LocalCache(CacheDataTypes.KeyValGenericFn, CacheDataTypes.KeyType, CacheDataTypes.ValType).init(a), .server = net.StreamServer.init(.{ .reuse_address = true }), .a = a };
         }
 
         pub fn startInstance(self: *Self) !std.Thread {
@@ -35,7 +35,7 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
             return try std.Thread.spawn(.{}, start, .{ self.a, &self.server, &self.cache });
         }
 
-        fn start(a: Allocator, server: *net.StreamServer, cache: *LocalCache(KeyValGenericMixin, KeyType, ValType)) !void {
+        fn start(a: Allocator, server: *net.StreamServer, cache: *LocalCache(CacheDataTypes.KeyValGenericFn, CacheDataTypes.KeyType, CacheDataTypes.ValType)) !void {
             while (true) {
                 _ = try std.Thread.spawn(.{}, clientHandle, .{ try server.*.accept(), a, cache });
             }
@@ -43,15 +43,15 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
 
         pub fn deinit(self: *Self) void {
             for (self.cache.key_val_store.items) |key_val| {
-                KeyValGenericMixin.freeKey(self.a, key_val.key);
-                KeyValGenericMixin.freeVal(self.a, key_val.val);
+                CacheDataTypes.KeyValGenericFn.freeKey(self.a, key_val.key);
+                CacheDataTypes.KeyValGenericFn.freeVal(self.a, key_val.val);
             }
             // does not deinit KeyVal pairs!
             self.cache.deinit();
             self.server.deinit();
         }
 
-        fn clientHandle(conn: net.StreamServer.Connection, a: Allocator, cache: *LocalCache(KeyValGenericMixin, KeyType, ValType)) !void {
+        fn clientHandle(conn: net.StreamServer.Connection, a: Allocator, cache: *LocalCache(CacheDataTypes.KeyValGenericFn, CacheDataTypes.KeyType, CacheDataTypes.ValType)) !void {
             var parser = try ProtocolParser.init(test_allocator, conn.stream, 500);
             var parser_state = ProtocolParser.ParserState.parsing;
             while (try parser.buffTcpParse()) {
@@ -60,23 +60,33 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
                         switch (parser.temp_parsing_prot_msg.op_code) {
                             CacheOperation.pullByKey => {
                                 var deref_val: ?[]u8 = null;
-                                var key = try KeyValGenericMixin.deserializeKey(parser.temp_parsing_prot_msg.key.?);
+                                var enc_key: ?[]u8 = null;
+                                var key = try CacheDataTypes.KeyValGenericFn.deserializeKey(parser.temp_parsing_prot_msg.key.?);
                                 if (cache.getValByKey(key)) |val| {
-                                    deref_val = KeyValGenericMixin.keyRawToSlice(&try KeyValGenericMixin.serializeKey(val.*));
+                                    if (CacheDataTypes.val_is_on_stack) {
+                                        deref_val = &try CacheDataTypes.KeyValGenericFn.serializeVal(val.*);
+                                    } else {
+                                        deref_val = try CacheDataTypes.KeyValGenericFn.serializeVal(val.*);
+                                    }
+                                }
+                                if (CacheDataTypes.key_is_on_stack) {
+                                    enc_key = &try CacheDataTypes.KeyValGenericFn.serializeKey(key);
+                                } else {
+                                    enc_key = try CacheDataTypes.KeyValGenericFn.serializeKey(key);
                                 }
                                 // optional optimisation for .encode possible (use of buffer instead of expensive iterative allocation)
-                                var msg_encoded = try ProtocolParser.encode(a, &.{ .op_code = CacheOperation.pullByKeyReply, .key = KeyValGenericMixin.keyRawToSlice(&try KeyValGenericMixin.serializeKey(key)), .val = deref_val });
+                                var msg_encoded = try ProtocolParser.encode(a, &.{ .op_code = CacheOperation.pullByKeyReply, .key = enc_key, .val = deref_val });
                                 if ((try parser.conn.write(msg_encoded)) != msg_encoded.len) {
                                     return RemoteCacheInstanceErr.TCPWriteErr;
                                 }
                                 a.free(msg_encoded);
                             },
                             CacheOperation.pushKeyVal => {
-                                if (cache.getValByKey(try KeyValGenericMixin.deserializeKey(parser.temp_parsing_prot_msg.key.?))) |val| {
-                                    KeyValGenericMixin.freeVal(a, val.*);
-                                    val.* = try KeyValGenericMixin.cloneVal(a, try KeyValGenericMixin.deserializeVal(parser.temp_parsing_prot_msg.val.?));
+                                if (cache.getValByKey(try CacheDataTypes.KeyValGenericFn.deserializeKey(parser.temp_parsing_prot_msg.key.?))) |val| {
+                                    CacheDataTypes.KeyValGenericFn.freeVal(a, val.*);
+                                    val.* = try CacheDataTypes.KeyValGenericFn.cloneVal(a, try CacheDataTypes.KeyValGenericFn.deserializeVal(parser.temp_parsing_prot_msg.val.?));
                                 } else {
-                                    try cache.addKeyVal(try KeyValGenericMixin.cloneKey(a, try KeyValGenericMixin.deserializeKey(parser.temp_parsing_prot_msg.key.?)), try KeyValGenericMixin.cloneVal(a, try KeyValGenericMixin.deserializeVal(parser.temp_parsing_prot_msg.val.?)));
+                                    try cache.addKeyVal(try CacheDataTypes.KeyValGenericFn.cloneKey(a, try CacheDataTypes.KeyValGenericFn.deserializeKey(parser.temp_parsing_prot_msg.key.?)), try CacheDataTypes.KeyValGenericFn.cloneVal(a, try CacheDataTypes.KeyValGenericFn.deserializeVal(parser.temp_parsing_prot_msg.val.?)));
                                 }
                             },
                             CacheOperation.pullByKeyReply => {
@@ -88,6 +98,6 @@ pub fn RemoteCacheInstance(comptime KeyValGenericMixin: type, comptime KeyType: 
             }
         }
 
-        pub usingnamespace KeyValGenericMixin;
+        pub usingnamespace CacheDataTypes.KeyValGenericFn;
     };
 }

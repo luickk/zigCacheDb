@@ -11,6 +11,7 @@ const test_utils = @import("utils.zig");
 const src = @import("src");
 const RemoteCacheInstance = src.RemoteCacheInstance;
 const CacheClient = src.CacheClient;
+const CacheDataTypes = src.CacheDataTypes;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -21,8 +22,9 @@ pub fn main() !void {
     }
 
     const test_data_set_size = 50;
+    const CacheTypes = CacheDataTypes(KeyValGenericOperations, []u8, []u8, false, false);
 
-    var remote_cache = RemoteCacheInstance(KeyValGenericOperations([]u8, []u8), []u8, []u8).init(gpa_allocator, 8888);
+    var remote_cache = RemoteCacheInstance(CacheTypes).init(gpa_allocator, 8888);
     defer remote_cache.deinit();
 
     // "adding" data-set to server by adding it to its local cache (since it's a pull and not a push test...)
@@ -43,7 +45,7 @@ pub fn main() !void {
     time.sleep(time.ns_per_s * 0.1);
 
     var addr = try std.net.Address.parseIp("127.0.0.1", 8888);
-    var client = CacheClient(KeyValGenericOperations([]u8, []u8), []u8, []u8).init(gpa_allocator, addr);
+    var client = CacheClient(CacheTypes).init(gpa_allocator, addr);
     defer client.deinit();
 
     try client.connectToServer();
@@ -112,15 +114,6 @@ fn KeyValGenericOperations(comptime KeyType: type, comptime ValType: type) type 
             var val_clone = try a.alloc(u8, val.len);
             mem.copy(u8, val_clone, val);
             return val_clone;
-        }
-
-        // if the data is kept on the stack and copied around, the following fns are required
-        pub fn keyRawToSlice(key_arr: *[]u8) []u8 {
-            return key_arr.*;
-        }
-
-        pub fn valRawToSlice(val_arr: *[]u8) []u8 {
-            return val_arr.*;
         }
 
         // for both kinds of data, the fns below are required

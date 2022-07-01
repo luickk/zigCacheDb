@@ -11,6 +11,7 @@ const test_utils = @import("utils.zig");
 const src = @import("src");
 const RemoteCacheInstance = src.RemoteCacheInstance;
 const CacheClient = src.CacheClient;
+const CacheDataTypes = src.CacheDataTypes;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -20,12 +21,11 @@ pub fn main() !void {
         if (leaked) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
-    comptime var KeyType: type = u128;
-    comptime var ValType: type = u64;
+    const CacheTypes = CacheDataTypes(KeyValGenericFn, u128, u64, true, true);
 
     const test_data_set_size = 50;
 
-    var remote_cache = RemoteCacheInstance(KeyValGenericOperations(KeyType, ValType), KeyType, ValType).init(gpa_allocator, 8888);
+    var remote_cache = RemoteCacheInstance(CacheTypes).init(gpa_allocator, 8888);
     defer remote_cache.deinit();
 
     // "adding" data-set to server by adding it to its local cache (since it's a pull and not a push test...)
@@ -42,7 +42,7 @@ pub fn main() !void {
     time.sleep(time.ns_per_s * 0.1);
 
     var addr = try std.net.Address.parseIp("127.0.0.1", 8888);
-    var client = CacheClient(KeyValGenericOperations(KeyType, ValType), KeyType, ValType).init(gpa_allocator, addr);
+    var client = CacheClient(CacheTypes).init(gpa_allocator, addr);
     defer client.deinit();
 
     try client.connectToServer();
@@ -55,7 +55,6 @@ pub fn main() !void {
                 print("- on stack p/pull test failed(val not correct) \n", .{});
                 return;
             }
-            KeyValGenericOperations(KeyType, ValType).freeVal(client.a, pull_val);
         } else {
             print("- on stack p/pull test failed \n", .{});
             return;
@@ -68,7 +67,6 @@ pub fn main() !void {
                     print("- on stack p/pull test failed(val not correct) \n", .{});
                     return;
                 }
-                KeyValGenericOperations(KeyType, ValType).freeVal(client.a, pull_val);
             } else {
                 print("- on stack p/pull test failed \n", .{});
                 return;
@@ -88,7 +86,7 @@ pub fn main() !void {
     }
 }
 
-fn KeyValGenericOperations(comptime KeyType: type, comptime ValType: type) type {
+fn KeyValGenericFn(comptime KeyType: type, comptime ValType: type) type {
     return struct {
 
         // If the data contains a pointer and needs memory management, the following fns is required
@@ -114,15 +112,6 @@ fn KeyValGenericOperations(comptime KeyType: type, comptime ValType: type) type 
             return val;
         }
 
-        // if the data is kept on the stack and copied around, the following fns are required
-        pub fn keyRawToSlice(key_arr: *[16]u8) []u8 {
-            return key_arr;
-        }
-
-        pub fn valRawToSlice(val_arr: *[8]u8) []u8 {
-            return val_arr;
-        }
-
         // for both kinds of data, the fns below are required
         pub fn eql(k1: KeyType, k2: KeyType) bool {
             return k1 == k2;
@@ -140,7 +129,7 @@ fn KeyValGenericOperations(comptime KeyType: type, comptime ValType: type) type 
         pub fn serializeVal(val: ValType) ![8]u8 {
             var int_buf = [_]u8{0} ** 8;
             mem.writeIntSliceNative(u64, &int_buf, val);
-            return &int_buf;
+            return int_buf;
         }
 
         pub fn deserializeVal(val: []u8) !ValType {
