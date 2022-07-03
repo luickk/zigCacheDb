@@ -45,4 +45,12 @@ pub fn build(b: *std.build.Builder) void {
 
     // adding integration tests to standard test
     test_step.dependOn(itest_step);
+
+    const pull_bench = b.addExecutable("pullBench", "integration-tests/pullBench.zig");
+    pull_bench.addPackagePath("src", "src/main.zig");
+    pull_bench.setBuildMode(mode);
+    pull_bench.install();
+
+    const bench_step = b.step("bench", "Run pull bench");
+    bench_step.dependOn(&pull_bench.run().step);
 }
