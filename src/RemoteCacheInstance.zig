@@ -59,23 +59,28 @@ pub fn RemoteCacheInstance(comptime CacheDataTypes: type) type {
                     if (parser_state == ParserState.done) {
                         switch (parser.temp_parsing_prot_msg.op_code) {
                             CacheOperation.pullByKey => {
-                                var deref_val: ?[]u8 = null;
-                                var enc_key: ?[]u8 = null;
                                 var key = try CacheDataTypes.KeyValGenericFn.deserializeKey(parser.temp_parsing_prot_msg.key.?);
+
+                                var enc_val_slice: ?[]u8 = null;
+                                var enc_val: @TypeOf(try CacheDataTypes.KeyValGenericFn.serializeVal(undefined)) = undefined;
                                 if (cache.getValByKey(key)) |val| {
-                                    if (comptime CacheDataTypes.val_is_on_stack) {
-                                        deref_val = &try CacheDataTypes.KeyValGenericFn.serializeVal(val.*);
+                                    enc_val = try CacheDataTypes.KeyValGenericFn.serializeVal(val.*);
+                                    if (@typeInfo(@TypeOf(enc_val)) == .Array) {
+                                        enc_val_slice = &enc_val;
                                     } else {
-                                        deref_val = try CacheDataTypes.KeyValGenericFn.serializeVal(val.*);
+                                        enc_val_slice = enc_val;
                                     }
                                 }
-                                if (comptime CacheDataTypes.key_is_on_stack) {
-                                    enc_key = &try CacheDataTypes.KeyValGenericFn.serializeKey(key);
+
+                                var enc_key = try CacheDataTypes.KeyValGenericFn.serializeKey(key);
+                                var enc_key_slice: []u8 = undefined;
+                                if (@typeInfo(@TypeOf(enc_key)) == .Array) {
+                                    enc_key_slice = &enc_key;
                                 } else {
-                                    enc_key = try CacheDataTypes.KeyValGenericFn.serializeKey(key);
+                                    enc_key_slice = enc_key;
                                 }
                                 // optional optimisation for .encode possible (use of buffer instead of expensive iterative allocation)
-                                var msg_encoded = try ProtocolParser.encode(a, &.{ .op_code = CacheOperation.pullByKeyReply, .key = enc_key, .val = deref_val });
+                                var msg_encoded = try ProtocolParser.encode(a, &.{ .op_code = CacheOperation.pullByKeyReply, .key = enc_key_slice, .val = enc_val_slice });
                                 if ((try parser.conn.write(msg_encoded)) != msg_encoded.len) {
                                     return RemoteCacheInstanceErr.TCPWriteErr;
                                 }

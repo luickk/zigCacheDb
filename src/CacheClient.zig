@@ -50,19 +50,21 @@ pub fn CacheClient(comptime CacheDataTypes: type) type {
         }
 
         pub fn pushKeyVal(self: *Self, key: CacheDataTypes.KeyType, val: CacheDataTypes.ValType) !void {
-            var enc_key: ?[]u8 = null;
-            if (comptime CacheDataTypes.key_is_on_stack) {
-                enc_key = &try CacheDataTypes.KeyValGenericFn.serializeKey(key);
+            var enc_key = try CacheDataTypes.KeyValGenericFn.serializeKey(key);
+            var enc_key_slice: []u8 = undefined;
+            if (@typeInfo(@TypeOf(enc_key)) == .Array) {
+                enc_key_slice = &enc_key;
             } else {
-                enc_key = try CacheDataTypes.KeyValGenericFn.serializeKey(key);
+                enc_key_slice = enc_key;
             }
+
             var enc_val: ?[]u8 = null;
             if (comptime CacheDataTypes.val_is_on_stack) {
                 enc_val = &try CacheDataTypes.KeyValGenericFn.serializeVal(val);
             } else {
                 enc_val = try CacheDataTypes.KeyValGenericFn.serializeVal(val);
             }
-            var msg = ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = enc_key, .val = enc_val };
+            var msg = ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = enc_key_slice, .val = enc_val };
             var msg_encoded = try ProtocolParser.encode(self.a, &msg);
             if ((try self.conn.write(msg_encoded)) != msg_encoded.len) {
                 return CacheClientErr.TCPWriteErr;
@@ -77,14 +79,15 @@ pub fn CacheClient(comptime CacheDataTypes: type) type {
                 try self.sync_cache.addKeyVal(key_clone, SyncCacheVal{ .val = null, .broadcast = .{}, .bc_sync = 0, .bc_mutex = .{} });
             }
 
-            var enc_key: ?[]u8 = null;
-            if (comptime CacheDataTypes.key_is_on_stack) {
-                enc_key = &try CacheDataTypes.KeyValGenericFn.serializeKey(key);
+            var enc_key = try CacheDataTypes.KeyValGenericFn.serializeKey(key);
+            var enc_key_slice: []u8 = undefined;
+            if (@typeInfo(@TypeOf(enc_key)) == .Array) {
+                enc_key_slice = &enc_key;
             } else {
-                enc_key = try CacheDataTypes.KeyValGenericFn.serializeKey(key);
+                enc_key_slice = enc_key;
             }
 
-            var msg_encoded = try ProtocolParser.encode(self.a, &ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pullByKey, .key = enc_key, .val = null });
+            var msg_encoded = try ProtocolParser.encode(self.a, &ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pullByKey, .key = enc_key_slice, .val = null });
             if ((try self.conn.write(msg_encoded)) != msg_encoded.len) {
                 return CacheClientErr.TCPWriteErr;
             }
