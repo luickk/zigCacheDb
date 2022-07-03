@@ -51,13 +51,13 @@ pub fn CacheClient(comptime CacheDataTypes: type) type {
 
         pub fn pushKeyVal(self: *Self, key: CacheDataTypes.KeyType, val: CacheDataTypes.ValType) !void {
             var enc_key: ?[]u8 = null;
-            if (CacheDataTypes.key_is_on_stack) {
+            if (comptime CacheDataTypes.key_is_on_stack) {
                 enc_key = &try CacheDataTypes.KeyValGenericFn.serializeKey(key);
             } else {
                 enc_key = try CacheDataTypes.KeyValGenericFn.serializeKey(key);
             }
             var enc_val: ?[]u8 = null;
-            if (CacheDataTypes.val_is_on_stack) {
+            if (comptime CacheDataTypes.val_is_on_stack) {
                 enc_val = &try CacheDataTypes.KeyValGenericFn.serializeVal(val);
             } else {
                 enc_val = try CacheDataTypes.KeyValGenericFn.serializeVal(val);
@@ -71,22 +71,25 @@ pub fn CacheClient(comptime CacheDataTypes: type) type {
         }
 
         pub fn pullValByKey(self: *Self, key: CacheDataTypes.KeyType) !?CacheDataTypes.ValType {
+            // contains allocation for stoarge in local cache as well as native endian version for val read
+            if (self.sync_cache.getValByKey(key) == null) {
+                var key_clone = try CacheDataTypes.KeyValGenericFn.cloneKey(self.a, key);
+                try self.sync_cache.addKeyVal(key_clone, SyncCacheVal{ .val = null, .broadcast = .{}, .bc_sync = 0, .bc_mutex = .{} });
+            }
+
             var enc_key: ?[]u8 = null;
-            if (CacheDataTypes.key_is_on_stack) {
+            if (comptime CacheDataTypes.key_is_on_stack) {
                 enc_key = &try CacheDataTypes.KeyValGenericFn.serializeKey(key);
             } else {
                 enc_key = try CacheDataTypes.KeyValGenericFn.serializeKey(key);
             }
+
             var msg_encoded = try ProtocolParser.encode(self.a, &ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pullByKey, .key = enc_key, .val = null });
             if ((try self.conn.write(msg_encoded)) != msg_encoded.len) {
                 return CacheClientErr.TCPWriteErr;
             }
             self.a.free(msg_encoded);
 
-            if (self.sync_cache.getValByKey(key) == null) {
-                var key_clone = try CacheDataTypes.KeyValGenericFn.cloneKey(self.a, key);
-                try self.sync_cache.addKeyVal(key_clone, SyncCacheVal{ .val = null, .broadcast = .{}, .bc_sync = 0, .bc_mutex = .{} });
-            }
             var val = self.sync_cache.getValByKey(key).?;
             val.bc_mutex.lock();
             while (val.bc_sync == 0) {
@@ -114,7 +117,7 @@ pub fn CacheClient(comptime CacheDataTypes: type) type {
                                 return CacheClientErr.OperationNotSupported;
                             },
                             CacheOperation.pullByKeyReply => {
-                                if (sync_cache.getValByKey(try CacheDataTypes.KeyValGenericFn.deserializeVal(parser.temp_parsing_prot_msg.key.?))) |val| {
+                                if (sync_cache.getValByKey(try CacheDataTypes.KeyValGenericFn.deserializeKey(parser.temp_parsing_prot_msg.key.?))) |val| {
                                     val.bc_mutex.lock();
                                     if (parser.temp_parsing_prot_msg.val) |msg_val| {
                                         val.val = try CacheDataTypes.KeyValGenericFn.cloneVal(a, try CacheDataTypes.KeyValGenericFn.deserializeVal(msg_val));

@@ -55,7 +55,7 @@ pub fn main() !void {
         print("- push test successfull \n", .{});
         return;
     } else {
-        print("- push test failed \n", .{});
+        print("- push test failed {d} \n", .{remote_cache.cache.getNKeyVal()});
         return;
     }
     return;
@@ -64,7 +64,7 @@ pub fn main() !void {
 fn KeyValGenericOperations(comptime KeyType: type, comptime ValType: type) type {
     return struct {
 
-        // If the data contains a pointer and needs memory management, the following fns is required
+        // If the data contains a pointer and needs memory allocs, the following fns are required
         pub fn freeKey(a: Allocator, key: KeyType) void {
             a.free(key);
         }
@@ -86,6 +86,7 @@ fn KeyValGenericOperations(comptime KeyType: type, comptime ValType: type) type 
         }
 
         // for both kinds of data, the fns below are required
+        // in this test case, the data does not have to be serialized nor reinterpreted
         pub fn eql(k1: KeyType, k2: KeyType) bool {
             return mem.eql(u8, k1, k2);
         }

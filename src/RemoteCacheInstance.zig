@@ -63,13 +63,13 @@ pub fn RemoteCacheInstance(comptime CacheDataTypes: type) type {
                                 var enc_key: ?[]u8 = null;
                                 var key = try CacheDataTypes.KeyValGenericFn.deserializeKey(parser.temp_parsing_prot_msg.key.?);
                                 if (cache.getValByKey(key)) |val| {
-                                    if (CacheDataTypes.val_is_on_stack) {
+                                    if (comptime CacheDataTypes.val_is_on_stack) {
                                         deref_val = &try CacheDataTypes.KeyValGenericFn.serializeVal(val.*);
                                     } else {
                                         deref_val = try CacheDataTypes.KeyValGenericFn.serializeVal(val.*);
                                     }
                                 }
-                                if (CacheDataTypes.key_is_on_stack) {
+                                if (comptime CacheDataTypes.key_is_on_stack) {
                                     enc_key = &try CacheDataTypes.KeyValGenericFn.serializeKey(key);
                                 } else {
                                     enc_key = try CacheDataTypes.KeyValGenericFn.serializeKey(key);

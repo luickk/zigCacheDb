@@ -21,6 +21,8 @@ pub fn main() !void {
         if (leaked) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
+    // last two CacheDataType bool are true since the key/ vals are both on the stack, thus not referenced as pointer
+    // and as such need different data handling. The branches are comptime  and as such shouldn't have an influence on performance
     const CacheTypes = CacheDataTypes(KeyValGenericFn, u128, u64, true, true);
 
     const test_data_set_size = 50;
@@ -90,6 +92,7 @@ fn KeyValGenericFn(comptime KeyType: type, comptime ValType: type) type {
     return struct {
 
         // If the data contains a pointer and needs memory management, the following fns is required
+        // since key/val (in this test)are both purely located on the stack, no allocations or frees are required
         pub fn freeKey(a: Allocator, key: KeyType) void {
             _ = a;
             _ = key;
@@ -116,6 +119,7 @@ fn KeyValGenericFn(comptime KeyType: type, comptime ValType: type) type {
         pub fn eql(k1: KeyType, k2: KeyType) bool {
             return k1 == k2;
         }
+
         pub fn serializeKey(key: KeyType) ![16]u8 {
             var int_buf = [_]u8{0} ** 16;
             mem.writeIntSliceNative(u128, &int_buf, key);

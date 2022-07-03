@@ -117,6 +117,7 @@ fn KeyValGenericOperations(comptime KeyType: type, comptime ValType: type) type 
         }
 
         // for both kinds of data, the fns below are required
+        // in this test case, the data does not have to be serialized nor reinterpreted
         pub fn eql(k1: KeyType, k2: KeyType) bool {
             return mem.eql(u8, k1, k2);
         }
