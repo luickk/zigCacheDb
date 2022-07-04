@@ -20,7 +20,7 @@ pub fn main() !void {
         if (leaked) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
-    const CacheTypes = CacheDataTypes(KeyValGenericOperations, []u8, []u8, false, false);
+    const CacheTypes = CacheDataTypes(KeyValGenericOperations, []u8, []u8);
 
     const test_data_set_size = 50;
 

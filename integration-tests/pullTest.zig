@@ -22,7 +22,7 @@ pub fn main() !void {
     }
 
     const test_data_set_size = 50;
-    const CacheTypes = CacheDataTypes(KeyValGenericOperations, []u8, []u8, false, false);
+    const CacheTypes = CacheDataTypes(KeyValGenericOperations, []u8, []u8);
 
     var remote_cache = RemoteCacheInstance(CacheTypes).init(gpa_allocator, 8888);
     defer remote_cache.deinit();

@@ -21,21 +21,20 @@ pub fn main() !void {
         if (leaked) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
+    // last two CacheDataType bool are true since the key/ vals are both on the stack, thus not referenced as pointer
+    // and as such need different data handling. The branches are comptime  and as such shouldn't have an influence on performance
+    const CacheTypes = CacheDataTypes(KeyValGenericFn, u128, u64);
+
     const test_data_set_size = 50;
-    const CacheTypes = CacheDataTypes(KeyValGenericOperations, []u8, []u8);
 
     var remote_cache = RemoteCacheInstance(CacheTypes).init(gpa_allocator, 8888);
     defer remote_cache.deinit();
 
     // "adding" data-set to server by adding it to its local cache (since it's a pull and not a push test...)
-    var data_set = try test_utils.createTestSetU8(gpa_allocator, test_data_set_size);
+    var data_set = try test_utils.createTestSetInt(gpa_allocator, test_data_set_size);
     defer data_set.deinit();
-    for (data_set.items) |*item| {
-        var tset_key_a: []u8 = try gpa_allocator.alloc(u8, item[0][0..].len);
-        var tset_val_a: []u8 = try gpa_allocator.alloc(u8, item[1][0..].len);
-        mem.copy(u8, tset_key_a, item[0][0..]);
-        mem.copy(u8, tset_val_a, item[1][0..]);
-        try remote_cache.cache.addKeyVal(tset_key_a, tset_val_a);
+    for (data_set.items) |item| {
+        try remote_cache.cache.addKeyVal(item[0], item[1]);
     }
 
     var remote_cache_thread = try remote_cache.startInstance();
@@ -49,67 +48,71 @@ pub fn main() !void {
     defer client.deinit();
 
     try client.connectToServer();
-    var all_time: u128 = 0;
 
     var timer = time.Timer.start() catch @panic("need timer to work");
+    var all_time: u128 = 0;
     const start_time = timer.read();
     var j: usize = 0;
-    for (data_set.items) |*item| {
-        if (try client.pullValByKey(item[0][0..])) |pull_val| {
+    for (data_set.items) |item| {
+        if (try client.pullValByKey(item[0])) |pull_val| {
             _ = pull_val;
             all_time += timer.read() - all_time;
-            // the bench leaks memory...
-            KeyValGenericOperations([]u8, []u8).freeVal(client.a, pull_val);
+            j += 1;
         }
-        j += 1;
     }
-    print("avg time per pull: {d}ns \n", .{(all_time - start_time) / j});
+    print("avg time per pull(stack based): {d}ns \n", .{(all_time - start_time) / j});
 }
 
-fn KeyValGenericOperations(comptime KeyType: type, comptime ValType: type) type {
+fn KeyValGenericFn(comptime KeyType: type, comptime ValType: type) type {
     return struct {
 
         // If the data contains a pointer and needs memory management, the following fns is required
+        // since key/val (in this test)are both purely located on the stack, no allocations or frees are required
         pub fn freeKey(a: Allocator, key: KeyType) void {
-            a.free(key);
+            _ = a;
+            _ = key;
+            // no free
         }
 
-        pub fn freeVal(a: Allocator, val: ValType) void {
-            a.free(val);
+        pub fn freeVal(a: Allocator, val: KeyType) void {
+            _ = a;
+            _ = val;
+            // no free
         }
 
         pub fn cloneKey(a: Allocator, key: KeyType) !KeyType {
-            var key_clone = try a.alloc(u8, key.len);
-            mem.copy(u8, key_clone, key);
-            return key_clone;
+            _ = a;
+            return key;
         }
 
         pub fn cloneVal(a: Allocator, val: ValType) !ValType {
-            var val_clone = try a.alloc(u8, val.len);
-            mem.copy(u8, val_clone, val);
-            return val_clone;
+            _ = a;
+            return val;
         }
 
         // for both kinds of data, the fns below are required
-        // in this test case, the data does not have to be serialized nor reinterpreted
         pub fn eql(k1: KeyType, k2: KeyType) bool {
-            return mem.eql(u8, k1, k2);
+            return k1 == k2;
         }
 
-        pub fn serializeKey(key: KeyType) ![]u8 {
-            return key;
+        pub fn serializeKey(key: KeyType) ![16]u8 {
+            var int_buf = [_]u8{0} ** 16;
+            mem.writeIntSliceNative(u128, &int_buf, key);
+            return int_buf;
         }
 
         pub fn deserializeKey(key: []u8) !KeyType {
-            return key;
+            return mem.readIntNative(u128, key[0..16]);
         }
 
-        pub fn serializeVal(val: ValType) ![]u8 {
-            return val;
+        pub fn serializeVal(val: ValType) ![8]u8 {
+            var int_buf = [_]u8{0} ** 8;
+            mem.writeIntSliceNative(u64, &int_buf, val);
+            return int_buf;
         }
 
         pub fn deserializeVal(val: []u8) !ValType {
-            return val;
+            return mem.readIntNative(u64, val[0..8]);
         }
     };
 }

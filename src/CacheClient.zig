@@ -58,13 +58,15 @@ pub fn CacheClient(comptime CacheDataTypes: type) type {
                 enc_key_slice = enc_key;
             }
 
-            var enc_val: ?[]u8 = null;
-            if (comptime CacheDataTypes.val_is_on_stack) {
-                enc_val = &try CacheDataTypes.KeyValGenericFn.serializeVal(val);
+            var enc_val = try CacheDataTypes.KeyValGenericFn.serializeVal(val);
+            var enc_val_slice: []u8 = undefined;
+            if (@typeInfo(@TypeOf(enc_val)) == .Array) {
+                enc_val_slice = &enc_val;
             } else {
-                enc_val = try CacheDataTypes.KeyValGenericFn.serializeVal(val);
+                enc_val_slice = enc_val;
             }
-            var msg = ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = enc_key_slice, .val = enc_val };
+
+            var msg = ProtocolParser.protMsgEnc{ .op_code = ProtocolParser.CacheOperation.pushKeyVal, .key = enc_key_slice, .val = enc_val_slice };
             var msg_encoded = try ProtocolParser.encode(self.a, &msg);
             if ((try self.conn.write(msg_encoded)) != msg_encoded.len) {
                 return CacheClientErr.TCPWriteErr;

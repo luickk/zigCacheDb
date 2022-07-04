@@ -51,6 +51,12 @@ pub fn build(b: *std.build.Builder) void {
     pull_bench.setBuildMode(mode);
     pull_bench.install();
 
+    const pull_bench_stack = b.addExecutable("pullBench", "integration-tests/pullBenchStack.zig");
+    pull_bench_stack.addPackagePath("src", "src/main.zig");
+    pull_bench_stack.setBuildMode(mode);
+    pull_bench_stack.install();
+
     const bench_step = b.step("bench", "Run pull bench");
     bench_step.dependOn(&pull_bench.run().step);
+    bench_step.dependOn(&pull_bench_stack.run().step);
 }

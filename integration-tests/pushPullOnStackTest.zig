@@ -23,7 +23,7 @@ pub fn main() !void {
 
     // last two CacheDataType bool are true since the key/ vals are both on the stack, thus not referenced as pointer
     // and as such need different data handling. The branches are comptime  and as such shouldn't have an influence on performance
-    const CacheTypes = CacheDataTypes(KeyValGenericFn, u128, u64, true, true);
+    const CacheTypes = CacheDataTypes(KeyValGenericFn, u128, u64);
 
     const test_data_set_size = 50;
 
